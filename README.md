@@ -17,6 +17,8 @@ A tiny Windows tray app with a Liquid Glass panel: see how much charge your Puls
 
 ▶ [Watch the 24 s demo video](docs/media/deskorb.mp4)
 
+**[Download the beta (v0.0.1)](https://github.com/DanyalRez/Deskorb/releases/latest)**
+
 </div>
 
 ---
@@ -49,6 +51,14 @@ Pin the icon next to the clock (drag it out of the hidden icons) and you can rea
 | <img src="assets/orbite/deskorb-orbite-512.png" width="64"> | <img src="assets/jauges/deskorb-jauges-512.png" width="64"> | **42** |
 | :---: | :---: | :---: |
 | **Orbit**: one ring that fills with your battery (or your Claude session when no mouse is found) | **Gauges**: outer ring = battery, inner ring = Claude session | **Percent**: just the number |
+
+## Install
+
+1. Download **`deskorb.exe`** from the [latest release](https://github.com/DanyalRez/Deskorb/releases/latest).
+2. Run it: the icon appears in the taskbar's hidden icons (drag it next to the clock to keep it visible).
+3. For the Claude limits, sign in once with Claude Code: `claude auth login`.
+
+No installer, no admin rights. Windows SmartScreen may warn about an unknown publisher the first time (the app isn't code-signed): *More info → Run anyway*. This is a **beta**: expect rough edges.
 
 ## Supported hardware and data
 
