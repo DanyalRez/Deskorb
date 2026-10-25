@@ -55,8 +55,10 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
 
+/// `None` aussi quand l'état est déjà emprunté : ShowWindow, SetForegroundWindow ou un menu renvoient des
+/// messages (WM_ACTIVATE…) pendant qu'on le modifie ; on les ignore au lieu de paniquer.
 fn app<T>(f: impl FnOnce(&mut App) -> T) -> Option<T> {
-    APP.with_borrow_mut(|a| a.as_mut().map(f))
+    APP.with(|a| a.try_borrow_mut().ok()?.as_mut().map(f))
 }
 
 /// Liquid Glass de DESKTOUCH ; le texte passe en foncé sur un fond clair.
