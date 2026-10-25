@@ -19,9 +19,9 @@ Même stack que DESKTOUCH, volontairement : **Rust + `windows-sys` uniquement**,
 
 Windows 11 ne permet plus d'insérer un widget *dans* la barre des tâches (les DeskBands sont supprimés). Deux voies réalistes :
 
-1. **v0 (fait)** : icône de notification dessinée en direct + infobulle détaillée. Trois styles au choix (clic droit → Icône) :
+1. **v0 (fait)** : icône de notification dessinée en direct + infobulle détaillée. Trois styles au choix (Réglages → Icône) :
    **Orbite** (le logo, l'arc se remplit avec la batterie, ou les tokens sans souris), **Jauges** (arc extérieur = batterie,
-   arc intérieur = tokens) ou **Pourcentage** (« 87 »). Choix gardé dans `%APPDATA%\Deskorb\icone.txt`. Épinglée hors du menu « icônes cachées », elle est toujours visible.
+   arc intérieur = tokens) ou **Pourcentage** (« 87 »). Choix gardé dans `%APPDATA%\Deskorb\settings.txt`. Épinglée hors du menu « icônes cachées », elle est toujours visible.
 2. **Plus tard, si besoin** : une petite fenêtre layered posée *par-dessus* la barre des tâches (technique de TrafficMonitor), pour afficher plus que 2–3 caractères. Plus fragile (thèmes, barre centrée, multi-écran).
 
 ## Logo
@@ -38,11 +38,12 @@ src/
   render.rs  moteur Liquid Glass (copie DESKTOUCH)
   win.rs     texte, capture du fond, icône dynamique, menu (repris de DESKTOUCH shell.rs)
   mouse.rs   énumération HID, état de la souris, `--probe`
+  settings.rs réglages (fichier clé=valeur, langue, lancement au démarrage)
   tokens.rs  fenêtre de 5 h lue dans ~/.claude (blocs, dédoublonnage, `--tokens`) + formats
 ```
 
 Flux : `WM_TIMER` → `mouse::read()` + `tokens::read()` → nouvelle icône + infobulle → si le panneau est ouvert, `draw()`.
-Clic gauche sur l'icône → panneau au-dessus de la barre, à droite ; perte du focus → il se ferme. Clic droit → Quitter.
+Clic gauche sur l'icône → panneau au-dessus de la barre ; sa roue dentée (ou le clic droit sur l'icône) → réglages : thème, icône, panneau détaillé/compact, limite de tokens, actualisation, langue EN/FR, alerte batterie faible, lancement au démarrage. Perte du focus ou Échap → la fenêtre se range.
 
 ## Souris : batterie (fait)
 
@@ -63,6 +64,4 @@ La souris s'endort vite quand on ne la touche pas : elle ne répond plus, l'app 
 - Layout exact du panneau (attend ton schéma) + animations à ressort de DESKTOUCH.
 - DPI et polling : hors du protocole connu, à relever par capture USB si besoin.
 - Dernière batterie connue perdue au redémarrage tant que la souris dort.
-- Limite de tokens : heuristique « plus gros bloc passé » (192 M chez toi, % trop bas) ; à remplacer par une valeur fixe.
-- Mode minimaliste / détaillé, choix barre ou anneau.
 - Icône encre blanche fixe : à adapter si la barre des tâches est en thème clair.

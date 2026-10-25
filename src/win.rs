@@ -50,8 +50,11 @@ pub unsafe fn text_layer(pw: usize, ph: usize, texts: &[Text], ink: Rgb) -> Laye
     let old = SelectObject(dc, bmp);
     SetBkMode(dc, TRANSPARENT as i32);
     for t in texts {
+        // caractères de la zone privée Unicode : pictogrammes de la police d'icônes de Windows 11 (roue dentée = E713)
+        let glyphs = !t.s.is_empty() && t.s.chars().all(|c| ('\u{E000}'..='\u{F8FF}').contains(&c));
+        let face = if glyphs { "Segoe Fluent Icons" } else { "Segoe UI Variable Text" };
         let font = CreateFontW(-t.size.round() as i32, 0, 0, 0, t.weight, 0, 0, 0, DEFAULT_CHARSET as u32, 0, 0,
-            ANTIALIASED_QUALITY as u32, 0, w("Segoe UI Variable Text").as_ptr());
+            ANTIALIASED_QUALITY as u32, 0, w(face).as_ptr());
         let of = SelectObject(dc, font);
         let g = (255.0 * t.level).round() as u32;
         SetTextColor(dc, g | g << 8 | g << 16);
@@ -181,6 +184,23 @@ pub unsafe fn tray(hwnd: HWND, msg: u32, op: NOTIFY_ICON_MESSAGE, icon: HICON, t
         *d = c;
     }
     Shell_NotifyIconW(op, &nid);
+}
+
+/// Bulle de notification Windows attachée à l'icône (ex. batterie faible).
+pub unsafe fn notify(hwnd: HWND, title: &str, text: &str) {
+    let mut nid: NOTIFYICONDATAW = zeroed();
+    nid.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
+    nid.hWnd = hwnd;
+    nid.uID = 1;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_WARNING;
+    for (d, c) in nid.szInfoTitle.iter_mut().take(63).zip(title.encode_utf16()) {
+        *d = c;
+    }
+    for (d, c) in nid.szInfo.iter_mut().take(255).zip(text.encode_utf16()) {
+        *d = c;
+    }
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
 /// Menu contextuel natif (id 0 = séparateur, booléen = coché) ; renvoie l'identifiant choisi (0 si rien).

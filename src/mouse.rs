@@ -37,8 +37,6 @@ pub struct Mouse {
     pub charging: bool,
     pub wired: bool,
     pub asleep: bool, // reliée au dongle mais endormie : elle ne donne pas sa batterie
-    pub dpi: Option<u32>,
-    pub polling_hz: Option<u32>,
 }
 
 /// Toutes les interfaces HID présentes.
@@ -106,7 +104,7 @@ unsafe fn describe(path: Vec<u16>) -> Option<Hid> {
 }
 
 /// État de la souris, `None` si aucune Pulsar n'est branchée (ni filaire ni dongle).
-// shortcut: DPI et polling restent vides, le driver Linux ne les lit pas ; à relever par capture USB si besoin
+// shortcut: ni DPI ni polling, le driver Linux ne les lit pas ; à relever par capture USB si besoin
 pub fn read() -> Option<Mouse> {
     let devs = list();
     let cmd = devs.iter().find(|d| {

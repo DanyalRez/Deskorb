@@ -45,8 +45,9 @@ thread_local! {
 
 /// Fenêtre de 5 h en cours, calculée depuis les transcriptions de Claude Code (~/.claude/projects).
 /// Comptage façon ccusage : entrée + sortie + écriture et lecture du cache.
-// shortcut: Anthropic ne publie pas la limite ; on prend le plus gros bloc passé (comme `ccusage --token-limit max`)
-pub fn read() -> Option<Usage> {
+/// `limit` : choisie dans les réglages ; sinon le plus gros bloc passé (comme `ccusage --token-limit max`),
+/// faute de limite publiée par Anthropic.
+pub fn read(limit: Option<u64>) -> Option<Usage> {
     let root = PathBuf::from(std::env::var_os("USERPROFILE")?).join(".claude").join("projects");
     CACHE.with_borrow_mut(|c| {
         let mut files = Vec::new();
@@ -57,7 +58,7 @@ pub fn read() -> Option<Usage> {
         c.entries.sort_unstable();
         let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
         let b = blocks(&c.entries);
-        let limit = b.iter().map(|b| b.2).max()?;
+        let limit = limit.or_else(|| b.iter().map(|b| b.2).max())?;
         let (used, reset) = match b.last() {
             Some(&(start, last, sum)) if now < start + WINDOW && now - last < WINDOW => (sum, start + WINDOW),
             _ => (0, now),
@@ -158,10 +159,11 @@ pub fn fmt_left(d: Duration) -> String {
     if m >= 60 { format!("{} h {:02}", m / 60, m % 60) } else { format!("{m} min") }
 }
 
-/// « 1,2 M », « 840 k », « 512 ».
-pub fn fmt_count(n: u64) -> String {
+/// « 65 M », « 1,2 M » (« 1.2 M » en anglais), « 840 k », « 512 ».
+pub fn fmt_count(n: u64, fr: bool) -> String {
     match n {
-        1_000_000.. => format!("{:.1} M", n as f64 / 1e6).replace('.', ","),
+        10_000_000.. => format!("{} M", (n as f64 / 1e6).round()),
+        1_000_000.. => format!("{:.1} M", n as f64 / 1e6).replace('.', if fr { "," } else { "." }),
         1_000.. => format!("{} k", n / 1000),
         _ => n.to_string(),
     }
@@ -179,9 +181,11 @@ mod tests {
         assert_eq!(Usage { used: 5, limit: 0, reset_at: SystemTime::now() }.pct(), 0.0);
         assert_eq!(fmt_left(Duration::from_secs(2 * 3600 + 5 * 60 + 30)), "2 h 05");
         assert_eq!(fmt_left(Duration::from_secs(14 * 60)), "14 min");
-        assert_eq!(fmt_count(1_234_567), "1,2 M");
-        assert_eq!(fmt_count(840_100), "840 k");
-        assert_eq!(fmt_count(512), "512");
+        assert_eq!(fmt_count(1_234_567, true), "1,2 M");
+        assert_eq!(fmt_count(1_234_567, false), "1.2 M");
+        assert_eq!(fmt_count(65_000_000, false), "65 M");
+        assert_eq!(fmt_count(840_100, true), "840 k");
+        assert_eq!(fmt_count(512, true), "512");
     }
 
     #[test]
