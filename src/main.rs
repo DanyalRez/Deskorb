@@ -83,6 +83,9 @@ impl App {
     fn mouse_line(&self) -> String {
         let Some(m) = &self.mouse else { return "Non détectée".into() };
         let mut parts = vec![if m.wired { "Filaire" } else { "Sans fil" }.to_string()];
+        if m.asleep {
+            parts.push("en veille".into());
+        }
         if m.charging {
             parts.push("en charge".into());
         }
@@ -110,7 +113,11 @@ impl App {
     }
 
     unsafe fn refresh(&mut self) {
+        let last = self.mouse.as_ref().and_then(|m| m.battery);
         self.mouse = mouse::read();
+        if let Some(m) = self.mouse.as_mut().filter(|m| m.battery.is_none()) {
+            m.battery = last; // en veille : on garde la dernière valeur lue
+        }
         self.usage = tokens::read();
         let old = self.icon;
         let bat = self.mouse.as_ref().and_then(|m| m.battery).map(|b| b as f32 / 100.0);

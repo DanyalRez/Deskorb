@@ -44,23 +44,25 @@ src/
 Flux : `WM_TIMER` → `mouse::read()` + `tokens::read()` → nouvelle icône + infobulle → si le panneau est ouvert, `draw()`.
 Clic gauche sur l'icône → panneau au-dessus de la barre, à droite ; perte du focus → il se ferme. Clic droit → Quitter.
 
-## Souris : ce que la sonde a trouvé
+## Souris : batterie (fait)
 
-`cargo run -- --probe` liste les interfaces HID. Dongle détecté : **`3710:5406` « Pulsar 8Kdx Dongle »**, interface `mi_01` avec des collections vendeur :
+Dongle **`3710:5406` « Pulsar 8Kdx Dongle »**. Protocole repris du driver Linux `hid-pulsar` (noyau, famille Kysona/ATK/VXE) :
+rapports de 17 octets sur la collection vendeur `FF02` (`mi_01`), envoyés en SET_REPORT (`HidD_SetOutputReport`),
+réponse lue en rapport d'entrée. Octet 0 = `0x08`, octet 1 = commande, dernier = `0x55 − somme`.
 
-| Usage page | In / Out / Feature (octets) | Rôle probable |
-| --- | --- | --- |
-| `FF02` | 17 / 17 / 0 | **canal de commandes** (requête → réponse) : candidat n° 1 pour batterie / DPI / polling |
-| `FF06` | 49 / 49 / 0 | transferts plus gros (macros, firmware) |
-| `FF04` | 0 / 0 / 8 | Feature report |
-| `FF03`, `FF05` | 8 / 0 / 0 | notifications du dongle (ex. changement d'état) |
+| Commande | Réponse |
+| --- | --- |
+| `0x03` état | `[6]` = 1 si la souris est reliée au dongle, 0 si elle dort |
+| `0x04` alimentation | `[6]` = batterie %, `[7]` = câble branché (charge), `[8..10]` = tension mV |
 
-Prochaine étape : capturer ce que l'app officielle Pulsar envoie sur `FF02` (Wireshark + USBPcap) au moment où elle affiche la batterie, puis reproduire la requête dans `mouse::read()`.
+La souris s'endort vite quand on ne la touche pas : elle ne répond plus, l'app garde alors la dernière valeur et affiche « en veille ».
+`cargo run -- --probe` liste les interfaces et lit la batterie.
 
 ## Reste à faire
 
 - Layout exact du panneau (attend ton schéma) + animations à ressort de DESKTOUCH.
-- Protocole batterie / DPI / polling (voir ci-dessus).
+- DPI et polling : hors du protocole connu, à relever par capture USB si besoin.
+- Dernière batterie connue perdue au redémarrage tant que la souris dort.
 - Limite de tokens : heuristique « plus gros bloc passé » (192 M chez toi, % trop bas) ; à remplacer par une valeur fixe.
 - Mode minimaliste / détaillé, choix barre ou anneau.
 - Icône encre blanche fixe : à adapter si la barre des tâches est en thème clair.
