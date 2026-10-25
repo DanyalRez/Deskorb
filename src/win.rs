@@ -203,6 +203,52 @@ pub unsafe fn notify(hwnd: HWND, title: &str, text: &str) {
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
+/// Requête HTTPS par WinHTTP (déjà dans Windows) : (statut, corps). `headers` : lignes terminées par \r\n.
+pub fn https(method: &str, host: &str, path: &str, headers: &str, body: Option<&[u8]>) -> Option<(u32, String)> {
+    use windows_sys::Win32::Networking::WinHttp::*;
+    unsafe {
+        // proxy du système sans détection automatique (WPAD) : celle-ci laisse des threads tourner en permanence
+        let session = WinHttpOpen(w("Deskorb").as_ptr(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, null(), null(), 0);
+        if session.is_null() {
+            return None;
+        }
+        WinHttpSetTimeouts(session, 5000, 5000, 5000, 10_000);
+        let conn = WinHttpConnect(session, w(host).as_ptr(), INTERNET_DEFAULT_HTTPS_PORT as u16, 0);
+        let req = if conn.is_null() { null_mut() } else {
+            WinHttpOpenRequest(conn, w(method).as_ptr(), w(path).as_ptr(), null(), null(), null(), WINHTTP_FLAG_SECURE)
+        };
+        let mut out = None;
+        let h = w(headers);
+        let (data, len) = body.map_or((null(), 0), |b| (b.as_ptr() as *const _, b.len() as u32));
+        if !req.is_null() && WinHttpSendRequest(req, h.as_ptr(), u32::MAX, data, len, len, 0) != 0
+            && WinHttpReceiveResponse(req, null_mut()) != 0
+        {
+            let (mut status, mut size) = (0u32, 4u32);
+            WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, null(),
+                &mut status as *mut u32 as _, &mut size, null_mut());
+            let mut buf = Vec::new();
+            loop {
+                let mut avail = 0;
+                if WinHttpQueryDataAvailable(req, &mut avail) == 0 || avail == 0 {
+                    break;
+                }
+                let start = buf.len();
+                buf.resize(start + avail as usize, 0);
+                let mut got = 0;
+                WinHttpReadData(req, buf[start..].as_mut_ptr() as _, avail, &mut got);
+                buf.truncate(start + got as usize);
+            }
+            out = Some((status, String::from_utf8_lossy(&buf).into_owned()));
+        }
+        for handle in [req, conn, session] {
+            if !handle.is_null() {
+                WinHttpCloseHandle(handle);
+            }
+        }
+        out
+    }
+}
+
 /// Menu contextuel natif (id 0 = séparateur, booléen = coché) ; renvoie l'identifiant choisi (0 si rien).
 pub unsafe fn menu(hwnd: HWND, entries: &[(usize, &str, bool)]) -> usize {
     let m = CreatePopupMenu();

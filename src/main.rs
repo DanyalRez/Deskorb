@@ -1,4 +1,4 @@
-//! DESKORB : batterie de la Pulsar TenZ et quota de tokens, dans la zone de notification.
+//! DESKORB : batterie de la Pulsar TenZ et limites d'usage Claude (session, semaine), dans la zone de notification.
 //! L'icône affiche l'état en direct (mini-widget) ; un clic ouvre un panneau Liquid Glass au-dessus de la barre,
 //! le clic droit ouvre les réglages. Deux fenêtres en couches dessinées par le moteur de DESKTOUCH.
 
@@ -17,16 +17,18 @@ use std::{
     cell::RefCell,
     mem::zeroed,
     ptr::{null, null_mut},
+    sync::Mutex,
     time::Instant,
 };
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::DwmFlush, Gdi::*},
-    System::LibraryLoader::GetModuleHandleW,
+    System::{LibraryLoader::GetModuleHandleW, Threading::{GetCurrentProcess, SetProcessWorkingSetSize}},
     UI::{HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
 };
 
 const WM_TRAY: u32 = WM_APP + 1;
+const WM_USAGE: u32 = WM_APP + 2; // réponse d'Anthropic arrivée (fil réseau → fil de l'interface)
 const T_POLL: usize = 1;
 const ID_SETTINGS: usize = 1;
 const ID_QUIT: usize = 2;
@@ -38,8 +40,16 @@ const PANEL_R: f32 = 26.0;
 const PREFS_W: f32 = 340.0;
 const PREFS_TOP: f32 = 54.0; // sous le titre
 const LOW_BATTERY: u8 = 20;
+// Anthropic limite la fréquence (429 vu à 15 s) : un relevé toutes les 2 min, espacé jusqu'à 30 min si refusé
+const USAGE_EVERY: u64 = 120;
+const USAGE_MAX_BACKOFF: u64 = 1800;
 const HEADER: f32 = 30.0; // en-tête du panneau : nom de l'app et bouton des réglages
 const GEAR: (f32, f32, f32) = (PANEL_W - 44.0, 8.0, 32.0); // x, y, côté (relatif au panneau)
+
+/// Rend à Windows les pages de mémoire inutilisées (pile HTTPS après un relevé, images libérées).
+fn trim() {
+    unsafe { SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX) };
+}
 
 /// Texte anglais ou français.
 type Tr = (&'static str, &'static str);
@@ -51,26 +61,22 @@ fn tr(fr: bool, t: Tr) -> &'static str {
 /// Contrôle d'une ligne des réglages.
 enum Ctl {
     Seg(&'static [Tr]),
-    Slider,
     Toggle,
 }
 
-const ROWS: [(Tr, Ctl); 8] = [
+const ROWS: [(Tr, Ctl); 7] = [
     (("Theme", "Thème"), Ctl::Seg(&[("Liquid Glass", "Liquid Glass"), ("Dark", "Sombre"), ("Light", "Clair")])),
     (("Tray icon", "Icône"), Ctl::Seg(&[("Orbit", "Orbite"), ("Gauges", "Jauges"), ("Percent", "Pourcentage")])),
     (("Panel", "Panneau"), Ctl::Seg(&[("Detailed", "Détaillé"), ("Compact", "Compact")])),
-    (("Token limit", "Limite de tokens"), Ctl::Slider),
     (("Refresh every", "Actualiser toutes les"), Ctl::Seg(&[("5 s", "5 s"), ("15 s", "15 s"), ("1 min", "1 min")])),
     (("Language", "Langue"), Ctl::Seg(&[("English", "English"), ("Français", "Français")])),
     (("Low battery alert", "Alerte batterie faible"), Ctl::Toggle),
     (("Launch at startup", "Lancer au démarrage"), Ctl::Toggle),
 ];
-const ROW_LIMIT: usize = 3;
 
 fn row_height(c: &Ctl) -> f32 {
     match c {
         Ctl::Seg(_) => 66.0,
-        Ctl::Slider => 58.0,
         Ctl::Toggle => 42.0,
     }
 }
@@ -174,6 +180,20 @@ impl Surface {
         UpdateLayeredWindow(self.hwnd, null_mut(), &pos, &size, self.dc, &src, 0, &blend, ULW_ALPHA);
     }
 
+    /// Fenêtre rangée : on rend ses images (fond flouté, calque, bitmap), soit ~10 Mo pour les réglages.
+    unsafe fn release(&mut self) {
+        self.shown = false;
+        ShowWindow(self.hwnd, SW_HIDE);
+        DeleteDC(self.dc); // libère d'abord la bitmap sélectionnée dedans
+        self.dc = CreateCompatibleDC(null_mut());
+        if !self.dib.is_null() {
+            DeleteObject(self.dib);
+        }
+        (self.dib, self.bits, self.win) = (null_mut(), null_mut(), zeroed());
+        (self.back, self.layer) = (Back::empty(), Layer::empty());
+        trim();
+    }
+
     /// Affiche sans activer puis demande le premier plan, pour se ranger quand on clique ailleurs (WM_ACTIVATE).
     unsafe fn show(&mut self) {
         ShowWindow(self.hwnd, SW_SHOWNA);
@@ -187,10 +207,13 @@ struct App {
     cfg: Config,
     panel: Surface,
     prefs: Surface,
-    p_rows: Vec<Spring>, // une par ligne : case choisie, curseur ou interrupteur
-    dragging: bool,
+    p_rows: Vec<Spring>, // une par ligne : case choisie ou interrupteur
     mouse: Option<mouse::Mouse>,
-    usage: Option<tokens::Usage>,
+    usage: Option<tokens::Usage>,     // dernières valeurs reçues, gardées si le réseau tombe
+    usage_err: Option<tokens::Error>, // dernier échec, affiché sous les valeurs
+    fetching: bool,
+    fetched_at: Option<Instant>, // dernière demande à Anthropic
+    usage_every: u64,            // secondes entre deux demandes, doublé à chaque 429
     alerted: bool,
     icon: HICON,
     taskbar_created: u32,
@@ -201,6 +224,7 @@ struct App {
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
 }
+static USAGE: Mutex<Option<Result<tokens::Usage, tokens::Error>>> = Mutex::new(None);
 
 /// `None` aussi quand l'état est déjà emprunté : ShowWindow, SetForegroundWindow ou un menu renvoient des
 /// messages (WM_ACTIVATE…) pendant qu'on le modifie ; on les ignore au lieu de paniquer.
@@ -243,19 +267,31 @@ impl App {
         parts.join(" · ")
     }
 
-    fn token_lines(&self) -> (String, String) {
+    fn pct(w: Option<tokens::Window>) -> String {
+        w.map_or("—".into(), |w| format!("{:.0} %", w.pct * 100.0))
+    }
+
+    /// « Session · reset dans 3 h 03 », ou pourquoi il n'y a pas de chiffres.
+    fn window_line(&self, w: Option<tokens::Window>, name: Tr) -> String {
         let fr = self.fr();
-        let Some(u) = &self.usage else { return ("—".into(), tr(fr, ("No Claude Code data", "Aucune donnée Claude Code")).into()) };
-        (
-            format!("{:.0} %", u.pct() * 100.0),
-            format!("{} / {} · {} {} · reset {}", tokens::fmt_count(u.used, fr), tokens::fmt_count(u.limit, fr),
-                tr(fr, ("left", "reste")), tokens::fmt_count(u.remaining(), fr), tokens::fmt_left(u.left())),
-        )
+        match (self.usage_err, w) {
+            (Some(tokens::Error::SignedOut), _) => tr(fr, ("Sign in: claude auth login", "Connecte-toi : claude auth login")).into(),
+            (Some(tokens::Error::Offline), None) => tr(fr, ("Offline", "Hors ligne")).into(),
+            (Some(tokens::Error::RateLimited), None) => tr(fr, ("Too many requests, retrying soon", "Trop de demandes, nouvel essai bientôt")).into(),
+            (_, None) => "…".into(),
+            (err, Some(w)) => {
+                let reset = w.left().map_or(String::new(), |d| format!(" · {} {}", tr(fr, ("resets in", "reset dans")), tokens::fmt_left(d, fr)));
+                // 429 : les valeurs ont au plus quelques minutes, inutile d'alarmer
+                let offline = if err == Some(tokens::Error::Offline) { tr(fr, (" · offline", " · hors ligne")) } else { "" };
+                format!("{}{reset}{offline}", tr(fr, name))
+            }
+        }
     }
 
     fn tip(&self) -> String {
         let bat = self.battery().map_or("—".into(), |b| format!("{b} %"));
-        format!("Pulsar : {bat}\nTokens : {}", self.token_lines().0)
+        let (s, w) = (Self::pct(self.usage.map(|u| u.session)), Self::pct(self.usage.map(|u| u.weekly)));
+        format!("Pulsar : {bat}\nClaude : {s} · {} {w}", tr(self.fr(), ("week", "semaine")))
     }
 
     unsafe fn refresh(&mut self) {
@@ -264,9 +300,47 @@ impl App {
         if let Some(m) = self.mouse.as_mut().filter(|m| m.battery.is_none()) {
             m.battery = last; // en veille : on garde la dernière valeur lue
         }
-        let limit = (self.cfg.limit_m > 0).then(|| self.cfg.limit_m as u64 * 1_000_000);
-        self.usage = tokens::read(limit);
+        self.fetch_usage(self.usage_every);
         self.check_low_battery();
+        self.refresh_icon();
+        if self.panel.shown {
+            self.rebuild_panel_layer();
+            self.kick();
+        }
+    }
+
+    /// Demande l'usage à Anthropic dans un fil à part, si la dernière demande date d'au moins `min_age` secondes
+    /// (ou de l'espacement imposé après un 429, qui prime).
+    fn fetch_usage(&mut self, min_age: u64) {
+        let wait = if self.usage_every > USAGE_EVERY { self.usage_every } else { min_age };
+        if self.fetching || self.fetched_at.is_some_and(|t| t.elapsed().as_secs() < wait) {
+            return;
+        }
+        self.fetching = true;
+        self.fetched_at = Some(Instant::now());
+        let h = self.panel.hwnd as isize;
+        std::thread::spawn(move || {
+            *USAGE.lock().unwrap() = Some(tokens::read());
+            unsafe { PostMessageW(h as HWND, WM_USAGE, 0, 0) };
+        });
+    }
+
+    /// Réponse d'Anthropic : nouvelles valeurs, ou on garde les anciennes avec la raison de l'échec.
+    unsafe fn usage_arrived(&mut self) {
+        self.fetching = false;
+        match USAGE.lock().unwrap().take() {
+            Some(Ok(u)) => (self.usage, self.usage_err, self.usage_every) = (Some(u), None, USAGE_EVERY),
+            Some(Err(e)) => {
+                if e == tokens::Error::RateLimited {
+                    self.usage_every = (self.usage_every * 2).min(USAGE_MAX_BACKOFF);
+                }
+                self.usage_err = Some(e);
+            }
+            None => return,
+        }
+        if !self.panel.shown && !self.prefs.shown {
+            trim(); // pas pendant qu'une fenêtre est ouverte : ses images resteraient à recharger
+        }
         self.refresh_icon();
         if self.panel.shown {
             self.rebuild_panel_layer();
@@ -292,7 +366,7 @@ impl App {
     unsafe fn refresh_icon(&mut self) {
         let old = self.icon;
         let bat = self.battery().map(|b| b as f32 / 100.0);
-        let tok = self.usage.as_ref().map(|u| u.pct());
+        let tok = self.usage.map(|u| u.session.pct);
         self.icon = match self.cfg.icon {
             0 => win::logo_icon(0, bat.or(tok), None), // une seule jauge : la batterie, sinon les tokens
             1 => win::logo_icon(1, bat, tok),
@@ -308,7 +382,7 @@ impl App {
     // ---------- panneau ----------
 
     fn panel_h(&self) -> f32 {
-        HEADER + if self.cfg.compact { 116.0 } else { 196.0 }
+        HEADER + if self.cfg.compact { 116.0 } else { 236.0 }
     }
 
     fn panel_rr(&self) -> Rr {
@@ -317,6 +391,7 @@ impl App {
     }
 
     unsafe fn show_panel(&mut self) {
+        self.fetch_usage(30); // chiffres frais à l'ouverture, sauf si Anthropic demande d'espacer
         let s = self.scale();
         self.panel.place_corner(PANEL_W, self.panel_h(), s);
         self.panel.capture((16.0 * s) as usize, self.panel_rr());
@@ -327,7 +402,7 @@ impl App {
         self.kick();
     }
 
-    /// Lignes du panneau : (titre, valeur, détail) ×2, aux hauteurs du mode choisi.
+    /// Lignes du panneau : souris, puis Claude (session et, en mode détaillé, semaine).
     unsafe fn rebuild_panel_layer(&mut self) {
         let s = self.scale();
         let p = self.panel_rr();
@@ -335,7 +410,11 @@ impl App {
         let rect = |x: f32, y: f32, w: f32, h: f32| RECT { left: px(x), top: px(y), right: px(x + w), bottom: px(y + h) };
         let t = |txt, r, size: f32, weight, flags, level| win::Text { s: txt, r, size: size * s, weight, flags, level };
         let bat_txt = self.battery().map_or("—".into(), |b| format!("{b} %"));
-        let (tok_pct, tok_detail) = self.token_lines();
+        let fr = self.fr();
+        let (session, weekly) = (self.usage.map(|u| u.session), self.usage.map(|u| u.weekly));
+        let (session_pct, weekly_pct) = (Self::pct(session), Self::pct(weekly));
+        let session_line = self.window_line(session, ("Session", "Session"));
+        let weekly_line = self.window_line(weekly, ("All models", "Tous les modèles"));
         let mouse_line = self.mouse_line();
         let (h, g) = (HEADER, GEAR);
         let tokens_y = h + if self.cfg.compact { 66.0 } else { 104.0 };
@@ -344,12 +423,15 @@ impl App {
             t("\u{E713}", rect(g.0, g.1, g.2, g.2), 14.0, 400, DT_CENTER | DT_VCENTER, 0.75),
             t("Pulsar TenZ", rect(20.0, h + 16.0, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
             t(&bat_txt, rect(180.0, h + 12.0, 120.0, 30.0), 22.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
-            t("Tokens", rect(20.0, tokens_y, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
-            t(&tok_pct, rect(180.0, tokens_y - 4.0, 120.0, 30.0), 22.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
+            t("Claude", rect(20.0, tokens_y, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
+            t(&session_pct, rect(180.0, tokens_y - 4.0, 120.0, 30.0), 22.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
         ];
         if !self.cfg.compact {
             texts.push(t(&mouse_line, rect(20.0, h + 40.0, 280.0, 18.0), 12.0, 400, DT_LEFT | DT_VCENTER, 0.7));
-            texts.push(t(&tok_detail, rect(20.0, h + 160.0, 280.0, 18.0), 12.0, 400, DT_LEFT | DT_VCENTER, 0.7));
+            texts.push(t(&session_line, rect(20.0, h + 146.0, 280.0, 18.0), 12.0, 400, DT_LEFT | DT_VCENTER, 0.7));
+            texts.push(t(tr(fr, ("Weekly", "Hebdomadaire")), rect(20.0, h + 172.0, 200.0, 20.0), 12.5, 600, DT_LEFT | DT_VCENTER, 0.9));
+            texts.push(t(&weekly_pct, rect(180.0, h + 170.0, 120.0, 24.0), 15.0, 600, DT_RIGHT | DT_VCENTER, 0.9));
+            texts.push(t(&weekly_line, rect(20.0, h + 208.0, 280.0, 18.0), 12.0, 400, DT_LEFT | DT_VCENTER, 0.7));
         }
         let ink = look(self.cfg.theme, self.panel.light_back).ink;
         self.panel.layer = win::text_layer(p.w as usize, p.h as usize, &texts, ink);
@@ -364,9 +446,9 @@ impl App {
         let shape = Rr { x: p.x + p.w * (1.0 - k), y: p.y + p.h * (1.0 - k), w: p.w * k, h: p.h * k, r: p.r };
         let content = smoothstep(0.4, 1.0, o);
         let look = look(self.cfg.theme, self.panel.light_back);
-        let (bar_bat, bar_tok) = if self.cfg.compact { (HEADER + 46.0, HEADER + 94.0) } else { (HEADER + 66.0, HEADER + 140.0) };
-        let bar = |y: f32, v: f32, color: Rgb| {
-            let rail = Rr { x: p.x + 20.0 * s, y: p.y + y * s, w: 280.0 * s, h: 8.0 * s, r: 4.0 * s };
+        let (bar_bat, bar_tok) = if self.cfg.compact { (HEADER + 46.0, HEADER + 94.0) } else { (HEADER + 66.0, HEADER + 132.0) };
+        let bar = |y: f32, v: f32, color: Rgb, th: f32| {
+            let rail = Rr { x: p.x + 20.0 * s, y: p.y + y * s, w: 280.0 * s, h: th * s, r: th * s / 2.0 };
             let fill = Rr { w: (rail.w * v.clamp(0.0, 1.0)).max(rail.h), ..rail };
             [Pill { rr: rail, color: look.ink, amount: 0.12 * content, rim: 0.0 },
                 Pill { rr: fill, color, amount: if v > 0.0 { 0.9 * content } else { 0.0 }, rim: 0.4 * content }]
@@ -374,8 +456,11 @@ impl App {
         let bat = self.battery().map_or(0.0, |b| b as f32 / 100.0);
         // batterie : vert, orange sous 20 %
         let bat_color = if bat > 0.0 && bat <= LOW_BATTERY as f32 / 100.0 { [1.0, 0.62, 0.25] } else { [0.35, 0.85, 0.45] };
-        let tok = self.usage.as_ref().map_or(0.0, |u| u.pct());
-        let mut pills: Vec<Pill> = bar(bar_bat, bat, bat_color).into_iter().chain(bar(bar_tok, tok, [0.45, 0.6, 1.0])).collect();
+        let (session, weekly) = (self.usage.map_or(0.0, |u| u.session.pct), self.usage.map_or(0.0, |u| u.weekly.pct));
+        let mut pills: Vec<Pill> = bar(bar_bat, bat, bat_color, 8.0).into_iter().chain(bar(bar_tok, session, [0.45, 0.6, 1.0], 8.0)).collect();
+        if !self.cfg.compact {
+            pills.extend(bar(HEADER + 196.0, weekly, [0.7, 0.55, 1.0], 6.0));
+        }
         // bouton des réglages : une pastille discrète sous la roue dentée
         let g = GEAR;
         pills.push(Pill { rr: Rr { x: p.x + g.0 * s, y: p.y + g.1 * s, w: g.2 * s, h: g.2 * s, r: g.2 * s / 2.0 },
@@ -404,17 +489,16 @@ impl App {
         Rr { x: M * s, y: M * s, w: PREFS_W * s, h: row_tops().1 * s, r: PANEL_R * s }
     }
 
-    /// Valeur affichée par la ligne `i` : case choisie, position du curseur ou interrupteur (0 / 1).
+    /// Valeur affichée par la ligne `i` : case choisie ou interrupteur (0 / 1).
     fn row_value(&self, i: usize) -> f32 {
         let c = &self.cfg;
         match i {
             0 => c.theme as f32,
             1 => c.icon as f32,
             2 => c.compact as u8 as f32,
-            3 => settings::limit_pos(c.limit_m),
-            4 => c.refresh as f32,
-            5 => c.french as u8 as f32,
-            6 => c.alert as u8 as f32,
+            3 => c.refresh as f32,
+            4 => c.french as u8 as f32,
+            5 => c.alert as u8 as f32,
             _ => c.startup as u8 as f32,
         }
     }
@@ -425,9 +509,8 @@ impl App {
         }
         if self.panel.shown {
             // tout de suite, sans animation : sinon il apparaîtrait dans la photo du fond des réglages
-            self.panel.shown = false;
             self.panel.open.snap(0.0);
-            ShowWindow(self.panel.hwnd, SW_HIDE);
+            self.panel.release();
         }
         let s = self.scale();
         self.prefs.place_corner(PREFS_W, row_tops().1, s);
@@ -453,13 +536,6 @@ impl App {
         self.kick();
     }
 
-    fn limit_label(&self) -> String {
-        match self.cfg.limit_m {
-            0 => "Auto".into(),
-            m => tokens::fmt_count(m as u64 * 1_000_000, self.fr()),
-        }
-    }
-
     unsafe fn rebuild_prefs_layer(&mut self) {
         let p = self.prefs_rr();
         let s = self.scale();
@@ -468,7 +544,6 @@ impl App {
             left: (x * s) as i32, top: (y * s) as i32, right: ((x + w) * s) as i32, bottom: ((y + h) * s) as i32,
         };
         let label = |t: &'static str, rect: RECT, level: f32, flags| win::Text { s: t, r: rect, size: 12.5 * s, weight: 500, flags, level };
-        let limit = self.limit_label();
         let (tops, _) = row_tops();
         let mut texts = vec![win::Text { s: tr(fr, ("Settings", "Réglages")), r: r(22.0, 16.0, 296.0, 26.0), size: 17.0 * s,
             weight: 600, flags: DT_LEFT | DT_VCENTER, level: 1.0 }];
@@ -484,7 +559,6 @@ impl App {
                         texts.push(t);
                     }
                 }
-                Ctl::Slider => texts.push(label(tr(fr, *name), r(22.0, y, 150.0, 18.0), 0.62, DT_LEFT | DT_VCENTER)),
                 Ctl::Toggle => {
                     let mut t = label(tr(fr, *name), r(22.0, y, 240.0, 40.0), 1.0, DT_LEFT | DT_VCENTER);
                     t.size = 13.5 * s;
@@ -492,8 +566,6 @@ impl App {
                 }
             }
         }
-        texts.push(win::Text { s: &limit, r: r(150.0, tops[ROW_LIMIT], 170.0, 18.0), size: 12.5 * s, weight: 600,
-            flags: DT_RIGHT | DT_VCENTER | DT_END_ELLIPSIS, level: 0.9 });
         let ink = look(self.cfg.theme, self.prefs.light_back).ink;
         self.prefs.layer = win::text_layer(p.w as usize, p.h as usize, &texts, ink);
     }
@@ -518,12 +590,6 @@ impl App {
                     let w = 300.0 / opts.len() as f32;
                     pills.push(pill(at(20.0, y + 22.0, 300.0, 34.0, 17.0), ac, 0.08, 0.0));
                     pills.push(pill(at(23.0 + v * w, y + 25.0, w - 6.0, 28.0, 14.0), ac, 0.2, 0.7));
-                }
-                Ctl::Slider => {
-                    let knob = 20.0 + v.clamp(0.0, 1.0) * (300.0 - 22.0);
-                    pills.push(pill(at(20.0, y + 30.0, 300.0, 6.0, 3.0), ac, 0.16, 0.0));
-                    pills.push(pill(at(20.0, y + 30.0, knob - 20.0 + 11.0, 6.0, 3.0), ac, 0.6, 0.0));
-                    pills.push(pill(at(knob, y + 22.0, 22.0, 22.0, 11.0), [1.0; 3], 1.0, 0.6));
                 }
                 Ctl::Toggle => {
                     pills.push(pill(at(272.0, y + 6.0, 48.0, 28.0, 14.0), ac, lerp(0.14, 0.6, v), 0.3));
@@ -557,18 +623,14 @@ impl App {
                     0 => self.cfg.theme = k,
                     1 => self.cfg.icon = k,
                     2 => self.cfg.compact = k == 1,
-                    4 => {
+                    3 => {
                         self.cfg.refresh = k;
                         SetTimer(self.panel.hwnd, T_POLL, settings::REFRESH_SECS[k] * 1000, None);
                     }
                     _ => self.cfg.french = k == 1,
                 }
             }
-            Ctl::Slider => {
-                self.dragging = true;
-                return self.set_limit_from(x);
-            }
-            Ctl::Toggle if i == 6 => self.cfg.alert = !self.cfg.alert,
+            Ctl::Toggle if i == 5 => self.cfg.alert = !self.cfg.alert,
             Ctl::Toggle => {
                 self.cfg.startup = !self.cfg.startup;
                 settings::set_startup(self.cfg.startup);
@@ -577,18 +639,10 @@ impl App {
         self.p_rows[i].target = self.row_value(i);
         settings::save(&self.cfg);
         match i {
-            0 | 5 => self.rebuild_prefs_layer(), // couleurs ou langue : tous les textes changent
+            0 | 4 => self.rebuild_prefs_layer(), // couleurs ou langue : tous les textes changent
             1 => self.refresh_icon(),
             _ => {}
         }
-        self.prefs_dirty();
-    }
-
-    unsafe fn set_limit_from(&mut self, lx: f32) {
-        let t = ((lx - 31.0) / 278.0).clamp(0.0, 1.0);
-        self.cfg.limit_m = settings::limit_from(t);
-        self.p_rows[ROW_LIMIT].target = t;
-        self.rebuild_prefs_layer();
         self.prefs_dirty();
     }
 
@@ -618,8 +672,7 @@ impl App {
         }
         for w in [&mut self.panel, &mut self.prefs] {
             if w.shown && w.open.target == 0.0 && w.open.rest() {
-                w.shown = false;
-                ShowWindow(w.hwnd, SW_HIDE);
+                w.release();
             }
         }
         self.animating = panel_moving || prefs_moving;
@@ -654,6 +707,9 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         },
         WM_TIMER if wp == T_POLL => {
             app(|a| a.refresh());
+        }
+        WM_USAGE => {
+            app(|a| a.usage_arrived());
         }
         // clic sur la roue dentée du panneau : les réglages
         WM_LBUTTONDOWN => {
@@ -695,37 +751,17 @@ unsafe extern "system" fn prefs_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_LBUTTONDOWN => {
             let Some((x, y)) = local(lp) else { return 0 };
-            // ligne touchée : la zone du contrôle (segments, curseur) ou toute la ligne (interrupteurs)
+            // ligne touchée : la zone des segments, ou toute la ligne pour un interrupteur
             let (tops, _) = row_tops();
             let row = ROWS.iter().enumerate().position(|(i, (_, c))| {
                 let t = tops[i];
                 match c {
                     Ctl::Seg(_) => (t + 22.0..t + 56.0).contains(&y) && (20.0..320.0).contains(&x),
-                    Ctl::Slider => (t + 14.0..t + 50.0).contains(&y) && (8.0..332.0).contains(&x),
                     Ctl::Toggle => (t..t + 40.0).contains(&y) && (0.0..PREFS_W).contains(&x),
                 }
             });
             if let Some(i) = row {
-                if matches!(ROWS[i].1, Ctl::Slider) {
-                    SetCapture(h);
-                }
                 app(|a| a.prefs_click(i, x));
-            }
-            0
-        }
-        WM_MOUSEMOVE => {
-            if let Some((x, _)) = local(lp) {
-                app(|a| if a.dragging { a.set_limit_from(x) });
-            }
-            0
-        }
-        WM_LBUTTONUP => {
-            if app(|a| std::mem::replace(&mut a.dragging, false)) == Some(true) {
-                ReleaseCapture();
-                app(|a| {
-                    settings::save(&a.cfg);
-                    a.refresh(); // nouvelle limite : nouveau %
-                });
             }
             0
         }
@@ -735,7 +771,7 @@ unsafe extern "system" fn prefs_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         // clic ailleurs : les réglages se rangent
         WM_ACTIVATE if wp & 0xFFFF == WA_INACTIVE as usize => {
-            app(|a| if !a.dragging { a.hide(true) });
+            app(|a| a.hide(true));
             0
         }
         _ => DefWindowProcW(h, msg, wp, lp),
@@ -753,11 +789,12 @@ fn main() {
         return mouse::probe();
     }
     if std::env::args().any(|a| a == "--tokens") {
-        let (t, fr) = (Instant::now(), false);
-        return match tokens::read(None) {
-            Some(u) => println!("{} / {} ({:.0} %), reset in {} — read in {:?}", tokens::fmt_count(u.used, fr),
-                tokens::fmt_count(u.limit, fr), u.pct() * 100.0, tokens::fmt_left(u.left()), t.elapsed()),
-            None => println!("no Claude Code data"),
+        let t = Instant::now();
+        let show = |w: tokens::Window| format!("{:.0} % (resets in {})", w.pct * 100.0,
+            w.left().map_or("—".into(), |d| tokens::fmt_left(d, false)));
+        return match tokens::read() {
+            Ok(u) => println!("session {} · weekly {} — {:?}", show(u.session), show(u.weekly), t.elapsed()),
+            Err(e) => println!("{e:?}"),
         };
     }
     unsafe {
@@ -779,10 +816,9 @@ fn main() {
             cfg, panel: Surface::new(h), prefs: Surface::new(ph),
             p_rows: ROWS.iter().map(|(_, c)| match c {
                 Ctl::Seg(_) => Spring::new(0.0, 420.0, 0.78),
-                Ctl::Slider => Spring::new(0.0, 900.0, 1.0),
                 Ctl::Toggle => Spring::new(0.0, 520.0, 0.75),
             }).collect(),
-            dragging: false, mouse: None, usage: None, alerted: false, icon,
+            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, alerted: false, icon,
             taskbar_created: RegisterWindowMessageW(win::w("TaskbarCreated").as_ptr()),
             animating: false, last: Instant::now(),
         }));

@@ -13,7 +13,7 @@ Même stack que DESKTOUCH, volontairement : **Rust + `windows-sys` uniquement**,
 | Texte | GDI `DrawTextW` → calque alpha (`win::text_layer`) | Recette DESKTOUCH |
 | Zone de notification | `Shell_NotifyIconW` + icône **régénérée** à chaque relevé (`win::text_icon`) | C'est le « mini-widget » : le % est lisible sans cliquer |
 | Lecture souris | API HID de Windows (`SetupDi*` + `HidD_*`), sans pilote | Pas de `hidapi` (C à compiler) pour ~80 lignes |
-| Tokens | Transcriptions Claude Code (`~/.claude/projects/**/*.jsonl`), relues en incrémental | Fenêtre de 5 h comme Claude Code ; aucune clé ni réseau |
+| Usage Claude | `GET api.anthropic.com/api/oauth/usage` avec le jeton de Claude Code (`~/.claude/.credentials.json`, renouvelé sur `platform.claude.com/v1/oauth/token` et réécrit), WinHTTP dans un fil à part | Mêmes % que l'écran « Limites d'utilisation » (session 5 h + semaine) ; relevé toutes les 2 min, espacé jusqu'à 30 min sur 429 |
 
 ### Sur la « barre des tâches »
 
@@ -39,7 +39,7 @@ src/
   win.rs     texte, capture du fond, icône dynamique, menu (repris de DESKTOUCH shell.rs)
   mouse.rs   énumération HID, état de la souris, `--probe`
   settings.rs réglages (fichier clé=valeur, langue, lancement au démarrage)
-  tokens.rs  fenêtre de 5 h lue dans ~/.claude (blocs, dédoublonnage, `--tokens`) + formats
+  tokens.rs  usage Claude en direct (jeton, renouvellement, réponse), `--tokens`
 ```
 
 Flux : `WM_TIMER` → `mouse::read()` + `tokens::read()` → nouvelle icône + infobulle → si le panneau est ouvert, `draw()`.
