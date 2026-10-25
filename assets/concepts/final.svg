@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1600" height="1438" viewBox="0 0 1600 1438"><rect width="1600" height="1438" fill="#f7f7f4"/><text x="60" y="78" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="40" font-weight="700" fill="#161616">Logo concepts</text><text x="60" y="116" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="20" fill="#6b6b6b">Concepts for review — pick a direction (or tell me what you like in each).</text><rect x="60" y="150" width="474.667" height="600" rx="18" fill="#fff" stroke="#e4e4e0" stroke-width="1"/><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="90" y="190" width="414.667" height="300" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="c0-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="c0-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#c0-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#c0-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round" d="M128 68A60 60 0 1 1 68 128"/><circle fill="#fff" cx="85.6" cy="85.6" r="13"/>
+</svg>
+</g><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="90" y="516" width="64" height="64" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s064-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s064-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s064-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s064-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round" d="M128 68A60 60 0 1 1 68 128"/><circle fill="#fff" cx="85.6" cy="85.6" r="13"/>
+</svg>
+</g><text x="122" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">64px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="180" y="548" width="32" height="32" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s032-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s032-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s032-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s032-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round" d="M128 68A60 60 0 1 1 68 128"/><circle fill="#fff" cx="85.6" cy="85.6" r="13"/>
+</svg>
+</g><text x="196" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">32px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="238" y="564" width="16" height="16" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s016-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s016-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s016-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s016-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round" d="M128 68A60 60 0 1 1 68 128"/><circle fill="#fff" cx="85.6" cy="85.6" r="13"/>
+</svg>
+</g><text x="246" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">16px</text><text x="90.0" y="636" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="26" font-weight="700" fill="#161616">A · Orbite</text><text x="90.0" y="670" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="19" fill="#555">Version maître</text><rect x="562.667" y="150" width="474.667" height="600" rx="18" fill="#fff" stroke="#e4e4e0" stroke-width="1"/><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="592.667" y="190" width="414.667" height="300" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="c1-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="c1-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#c1-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#c1-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="17" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 92A36 36 0 0 1 128 164"/></g>
+</svg>
+</g><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="592.667" y="516" width="64" height="64" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s164-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s164-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s164-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s164-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="17" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 92A36 36 0 0 1 128 164"/></g>
+</svg>
+</g><text x="624.667" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">64px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="682.667" y="548" width="32" height="32" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s132-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s132-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s132-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s132-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="17" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 92A36 36 0 0 1 128 164"/></g>
+</svg>
+</g><text x="698.667" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">32px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="740.667" y="564" width="16" height="16" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s116-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s116-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s116-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s116-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="17" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 92A36 36 0 0 1 128 164"/></g>
+</svg>
+</g><text x="748.667" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">16px</text><text x="592.6666666666667" y="636" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="26" font-weight="700" fill="#161616">B · Jauges</text><text x="592.6666666666667" y="670" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="19" fill="#555">Version maître</text><rect x="1065.33" y="150" width="474.667" height="600" rx="18" fill="#fff" stroke="#e4e4e0" stroke-width="1"/><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="1095.33" y="190" width="414.667" height="300" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="c2-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="c2-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#c2-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#c2-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" d="M128 72A56 56 0 1 1 72 128"/><circle fill="#fff" cx="88.4" cy="88.4" r="16"/>
+</svg>
+</g><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="1095.33" y="516" width="64" height="64" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s264-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s264-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s264-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s264-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" d="M128 72A56 56 0 1 1 72 128"/><circle fill="#fff" cx="88.4" cy="88.4" r="16"/>
+</svg>
+</g><text x="1127.33" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">64px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="1185.33" y="548" width="32" height="32" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s232-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s232-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s232-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s232-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" d="M128 72A56 56 0 1 1 72 128"/><circle fill="#fff" cx="88.4" cy="88.4" r="16"/>
+</svg>
+</g><text x="1201.33" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">32px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="1243.33" y="564" width="16" height="16" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s216-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s216-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s216-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s216-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" d="M128 72A56 56 0 1 1 72 128"/><circle fill="#fff" cx="88.4" cy="88.4" r="16"/>
+</svg>
+</g><text x="1251.33" y="600" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">16px</text><text x="1095.3333333333335" y="636" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="26" font-weight="700" fill="#161616">C · Orbite (petites tailles)</text><text x="1095.3333333333335" y="670" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="19" fill="#555">Traits plus épais pour 16–32 px</text><rect x="60" y="778" width="474.667" height="600" rx="18" fill="#fff" stroke="#e4e4e0" stroke-width="1"/><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="90" y="818" width="414.667" height="300" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="c3-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="c3-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#c3-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#c3-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 96A32 32 0 0 1 128 160"/></g>
+</svg>
+</g><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="90" y="1144" width="64" height="64" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s364-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s364-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s364-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s364-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 96A32 32 0 0 1 128 160"/></g>
+</svg>
+</g><text x="122" y="1228" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">64px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="180" y="1176" width="32" height="32" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s332-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s332-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s332-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s332-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 96A32 32 0 0 1 128 160"/></g>
+</svg>
+</g><text x="196" y="1228" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">32px</text><g><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" x="238" y="1192" width="16" height="16" preserveAspectRatio="xMidYMid meet"><title>Deskorb</title>
+<defs>
+<linearGradient id="s316-verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="s316-bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#s316-verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#s316-bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<g fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round"><path d="M128 62A66 66 0 1 1 62 128"/><path d="M128 96A32 32 0 0 1 128 160"/></g>
+</svg>
+</g><text x="246" y="1228" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8a8a8a" text-anchor="middle">16px</text><text x="90.0" y="1264" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="26" font-weight="700" fill="#161616">D · Jauges (petites tailles)</text><text x="90.0" y="1298" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="19" fill="#555">Traits plus épais pour 16–32 px</text></svg>

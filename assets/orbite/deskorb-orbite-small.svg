@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><title>Deskorb</title>
+<defs>
+<linearGradient id="verre" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a4a54"/><stop offset="1" stop-color="#1c1c21"/></linearGradient>
+<linearGradient id="bord" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
+</defs>
+<path fill="url(#verre)" d="M86 16H170A70 70 0 0 1 240 86V170A70 70 0 0 1 170 240H86A70 70 0 0 1 16 170V86A70 70 0 0 1 86 16Z"/>
+<path fill="none" stroke="url(#bord)" stroke-width="5" d="M86 18.5H170A67.5 67.5 0 0 1 237.5 86V170A67.5 67.5 0 0 1 170 237.5H86A67.5 67.5 0 0 1 18.5 170V86A67.5 67.5 0 0 1 86 18.5Z"/>
+<path fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" d="M128 72A56 56 0 1 1 72 128"/><circle fill="#fff" cx="88.4" cy="88.4" r="16"/>
+</svg>
