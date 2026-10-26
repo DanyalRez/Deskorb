@@ -49,7 +49,8 @@ const HEADER: f32 = 30.0; // en-tête du panneau : nom de l'app et bouton des r�
 const GEAR: (f32, f32, f32) = (PANEL_W - 44.0, 8.0, 32.0); // x, y, côté (relatif au panneau)
 const BACK: (f32, f32, f32) = (12.0, 8.0, 32.0); // retour de la vue Usage Pro
 const PRO_ROWS: usize = 5;
-const PRO_H: f32 = 224.0; // vue Usage Pro, sous l'en-tête
+const PRO_H: f32 = 344.0; // vue Usage Pro, sous l'en-tête
+const CHART: (f32, f32) = (238.0, 54.0); // graphique 7 jours : haut des barres, hauteur max (relatifs à l'en-tête)
 
 /// Rend à Windows les pages de mémoire inutilisées (pile HTTPS après un relevé, images libérées).
 fn trim() {
@@ -222,6 +223,7 @@ struct App {
     reading: bool,               // relecture des transcriptions locales en cours
     pro: bool,                   // le panneau montre la vue Usage Pro
     pro_all: Vec<(String, u64, f64)>, // projets de la fenêtre, du plus coûteux au moins : nom, tokens, coût $
+    pro_days: [(u64, f64); 7],        // 7 derniers jours locaux (le dernier = aujourd'hui) : tokens, coût $
     alerted: bool,
     icon: HICON,
     taskbar_created: u32,
@@ -458,13 +460,17 @@ impl App {
         let rect = |x: f32, y: f32, w: f32, h: f32| RECT { left: px(x), top: px(y), right: px(x + w), bottom: px(y + h) };
         let t = |txt, r, size: f32, weight, flags, level| win::Text { s: txt, r, size: size * s, weight, flags, level };
         // try_lock : pendant la première lecture (~1 s), on garde les derniers chiffres au lieu de figer l'interface
+        let (now, tz) = (usage::now(), win::utc_offset());
         let fresh = usage::READER.try_lock().ok().and_then(|g| g.as_ref().map(|r| {
-            r.top_projects(self.window_start(r), usize::MAX).into_iter().map(|(n, tk, c)| (n.to_string(), tk, c)).collect()
+            let all = r.top_projects(self.window_start(r), usize::MAX).into_iter().map(|(n, tk, c)| (n.to_string(), tk, c)).collect();
+            (all, r.daily(now, tz))
         }));
         let loaded = fresh.is_some() || !self.pro_all.is_empty();
-        if let Some(all) = fresh {
-            self.pro_all = all;
+        if let Some((all, days)) = fresh {
+            (self.pro_all, self.pro_days) = (all, days);
         }
+        let (week_tokens, week_cost) = self.pro_days.iter().fold((0, 0.0), |a, d| (a.0 + d.0, a.1 + d.1));
+        let week_total = format!("{} · {}", usage::fmt_tokens(week_tokens, fr), usage::fmt_cost(week_cost, fr));
         let all = &self.pro_all;
         let (tokens, cost) = all.iter().fold((0, 0.0), |a, r| (a.0 + r.1, a.1 + r.2));
         let h = HEADER;
@@ -485,7 +491,15 @@ impl App {
             t(tr(fr, ("Projects · this 5 h window", "Projets · fenêtre de 5 h")), rect(20.0, h + 12.0, 200.0, 22.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
             t(&total, rect(200.0, h + 8.0, 100.0, 28.0), 18.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
             t(&footer, rect(20.0, h + PRO_H - 30.0, 280.0, 18.0), 11.5, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.6),
+            t(tr(fr, ("Last 7 days", "7 derniers jours")), rect(20.0, h + 206.0, 140.0, 22.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
+            t(&week_total, rect(140.0, h + 206.0, 160.0, 22.0), 12.5, 600, DT_RIGHT | DT_VCENTER, 0.85),
         ];
+        // initiale du jour sous chaque barre ; aujourd'hui plus marqué
+        for i in 0..7 {
+            let x = 20.0 + i as f32 * 40.0;
+            let level = if i == 6 { 0.95 } else { 0.5 };
+            texts.push(t(usage::weekday_letter(now, tz, 6 - i as i64, fr), rect(x, h + CHART.0 + CHART.1 + 4.0, 40.0, 16.0), 11.0, 600, DT_CENTER | DT_VCENTER, level));
+        }
         for (i, (row, (tk, c))) in rows.iter().zip(&cells).enumerate() {
             let y = h + 44.0 + i as f32 * 30.0;
             texts.push(t(&row.0, rect(20.0, y, 150.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.95));
@@ -560,6 +574,15 @@ impl App {
             let top = self.pro_all.first().map_or(0.0, |r| r.2).max(1e-9);
             for (i, r) in self.pro_all.iter().take(PRO_ROWS).enumerate() {
                 pills.extend(bar(HEADER + 64.0 + i as f32 * 30.0, (r.2 / top) as f32, [0.45, 0.6, 1.0], 3.0));
+            }
+            // 7 jours : une barre par jour à l'échelle du plus cher, aujourd'hui en plein
+            let max = self.pro_days.iter().map(|d| d.1).fold(0.0, f64::max).max(1e-9);
+            for (i, d) in self.pro_days.iter().enumerate() {
+                let hgt = if d.0 == 0 { 3.0 } else { (CHART.1 * (d.1 / max) as f32).max(5.0) };
+                let rr = Rr { x: p.x + (20.0 + i as f32 * 40.0 + 9.0) * s, y: p.y + (HEADER + CHART.0 + CHART.1 - hgt) * s,
+                    w: 22.0 * s, h: hgt * s, r: 5.0_f32.min(hgt / 2.0) * s };
+                let amount = if i == 6 { 0.9 } else if d.0 == 0 { 0.12 } else { 0.55 };
+                pills.push(Pill { rr, color: [0.45, 0.6, 1.0], amount: amount * content, rim: 0.35 * content });
             }
             pills.push(button(BACK));
         } else {
@@ -933,7 +956,7 @@ fn main() {
                 Ctl::Seg(_) => Spring::new(0.0, 420.0, 0.78),
                 Ctl::Toggle => Spring::new(0.0, 520.0, 0.75),
             }).collect(),
-            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), alerted: false, icon,
+            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), pro_days: [(0, 0.0); 7], alerted: false, icon,
             taskbar_created: RegisterWindowMessageW(win::w("TaskbarCreated").as_ptr()),
             animating: false, last: Instant::now(),
         }));

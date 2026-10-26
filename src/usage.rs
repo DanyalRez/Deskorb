@@ -154,6 +154,22 @@ impl Reader {
         v
     }
 
+    /// Totaux des 7 derniers jours locaux (le dernier = aujourd'hui) : (tokens, coût $).
+    /// `tz` : décalage de l'heure locale sur UTC, en secondes.
+    pub fn daily(&self, now: i64, tz: i64) -> [(u64, f64); 7] {
+        let today = (now + tz).div_euclid(86400);
+        let mut days = [(0, 0.0); 7];
+        for e in &self.entries {
+            let back = today - (e.t + tz).div_euclid(86400);
+            if (0..7).contains(&back) {
+                let d = &mut days[6 - back as usize];
+                d.0 += e.tokens();
+                d.1 += e.cost();
+            }
+        }
+        days
+    }
+
     /// Début de la fenêtre de 5 h en cours, quand l'API ne le donne pas : premier message après un trou de 5 h.
     pub fn local_block_start(&self, now: i64) -> i64 {
         let mut t: Vec<i64> = self.entries.iter().map(|e| e.t).filter(|&t| t > now - 10 * 3600).collect();
@@ -283,6 +299,13 @@ fn epoch(ts: &str) -> Option<i64> {
     Some((era * 146097 + doe - 719468) * 86400 + n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?)
 }
 
+/// Initiale du jour de la semaine (lundi = L / M), `days_ago` jours avant aujourd'hui.
+pub fn weekday_letter(now: i64, tz: i64, days_ago: i64, fr: bool) -> &'static str {
+    // le 1er janvier 1970 était un jeudi
+    let wd = ((now + tz).div_euclid(86400) - days_ago + 3).rem_euclid(7) as usize; // 0 = lundi
+    if fr { ["L", "M", "M", "J", "V", "S", "D"][wd] } else { ["M", "T", "W", "T", "F", "S", "S"][wd] }
+}
+
 /// « 12,40 $ », « 0,85 $ » (« $12.40 » en anglais).
 pub fn fmt_cost(c: f64, fr: bool) -> String {
     if fr { format!("{c:.2} $").replace('.', ",") } else { format!("${c:.2}") }
@@ -360,6 +383,19 @@ mod tests {
         r.scan(&f, 0);
         assert_eq!(r.entries.len(), 3);
         std::fs::remove_dir_all(&dir).unwrap();
+
+        // jours locaux : à UTC+1, 23 h 30 UTC appartient déjà au lendemain
+        let now: i64 = 1_792_945_975; // dimanche 25/10/2026 16:32 UTC
+        let tz: i64 = 3600;
+        let at = |t: i64| Entry { t, project: 0, model: model_index("claude-opus-5-5"), input: 1_000_000, output: 0, cache_5m: 0, cache_1h: 0, cache_read: 0 };
+        let midnight = (now + tz).div_euclid(86400) * 86400 - tz; // minuit local aujourd'hui, en UTC
+        r.entries = vec![at(now), at(midnight - 1800), at(midnight - 6 * 86400), at(midnight - 7 * 86400)];
+        let d = r.daily(now, tz);
+        assert_eq!(d.map(|x| x.0), [1_000_000, 0, 0, 0, 0, 1_000_000, 1_000_000]);
+        assert!((d[6].1 - 4.0).abs() < 1e-9);
+        assert_eq!(weekday_letter(now, tz, 0, false), "S"); // dimanche
+        assert_eq!(weekday_letter(now, tz, 1, true), "S"); // samedi
+        assert_eq!(weekday_letter(now, tz, 6, true), "L"); // lundi
         assert_eq!(fmt_cost(12.4, true), "12,40 $");
         assert_eq!(fmt_cost(12.4, false), "$12.40");
     }

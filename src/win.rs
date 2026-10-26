@@ -203,6 +203,18 @@ pub unsafe fn notify(hwnd: HWND, title: &str, text: &str) {
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
+/// Décalage de l'heure locale sur UTC, en secondes (heure d'été comprise).
+// shortcut: un seul décalage pour les 7 jours, un changement d'heure dans la semaine décale ces jours d'1 h
+pub fn utc_offset() -> i64 {
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+    unsafe {
+        let mut tz: TIME_ZONE_INFORMATION = zeroed();
+        let mode = GetTimeZoneInformation(&mut tz);
+        let dst = if mode == 2 { tz.DaylightBias } else { tz.StandardBias }; // 2 = heure d'été en cours
+        -((tz.Bias + dst) as i64) * 60
+    }
+}
+
 /// Requête HTTPS par WinHTTP (déjà dans Windows) : (statut, corps). `headers` : lignes terminées par \r\n.
 pub fn https(method: &str, host: &str, path: &str, headers: &str, body: Option<&[u8]>) -> Option<(u32, String)> {
     use windows_sys::Win32::Networking::WinHttp::*;
