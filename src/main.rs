@@ -109,6 +109,11 @@ fn look(theme: usize, light_back: bool) -> Look {
     }
 }
 
+/// Jauge Claude : bleu, orange au-dessus de 75 %, rouge au-dessus de 90 %.
+fn gauge_color(pct: f32, normal: Rgb) -> Rgb {
+    if pct >= 0.9 { [1.0, 0.36, 0.36] } else if pct >= 0.75 { [1.0, 0.62, 0.25] } else { normal }
+}
+
 /// Couleur des éléments posés sur le verre : blanc sur verre sombre, noir sur verre clair.
 fn accent(l: &Look) -> Rgb {
     if l.ink[0] > 0.5 { [1.0; 3] } else { [0.0; 3] }
@@ -224,6 +229,7 @@ struct App {
     pro: bool,                   // le panneau montre la vue Usage Pro
     pro_all: Vec<(String, u64, f64)>, // projets de la fenêtre, du plus coûteux au moins : nom, tokens, coût $
     pro_days: [(u64, f64); 7],        // 7 derniers jours locaux (le dernier = aujourd'hui) : tokens, coût $
+    forecast: usage::Forecast,        // prévision de la session, recalculée quand les données changent
     alerted: bool,
     icon: HICON,
     taskbar_created: u32,
@@ -279,6 +285,29 @@ impl App {
 
     fn pct(w: Option<tokens::Window>) -> String {
         w.map_or("—".into(), |w| format!("{:.0} %", w.pct * 100.0))
+    }
+
+    /// Prévision de la session : « Limite vers 21:40 · reset 22:32 » quand elle tomberait avant le reset,
+    /// sinon la ligne habituelle, complétée de « rythme OK » s'il y a de l'activité.
+    fn session_line(&mut self) -> String {
+        let fr = self.fr();
+        let session = self.usage.map(|u| u.session);
+        let (now, tz) = (usage::now(), win::utc_offset());
+        let reset = session.and_then(|w| w.reset_at).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+        if let (Some(w), Some(reset)) = (session, reset) {
+            if let Some(f) = usage::READER.try_lock().ok().and_then(|g| g.as_ref().map(|r| r.forecast(w.pct, reset - 5 * 3600, reset, now))) {
+                self.forecast = f;
+            }
+            if let usage::Forecast::LimitAt(t) = self.forecast {
+                return format!("{} {} · reset {}", tr(fr, ("Limit around", "Limite vers")), usage::clock(t, tz), usage::clock(reset, tz));
+            }
+        }
+        let line = self.window_line(session, ("Session", "Session"));
+        if self.forecast == usage::Forecast::Safe && self.usage_err.is_none() {
+            format!("{line} · {}", tr(fr, ("pace OK", "rythme OK")))
+        } else {
+            line
+        }
     }
 
     /// « Session · reset dans 3 h 03 », ou pourquoi il n'y a pas de chiffres.
@@ -351,10 +380,10 @@ impl App {
 
     unsafe fn local_arrived(&mut self) {
         self.reading = false;
-        if self.panel.shown && self.pro {
+        if self.panel.shown {
             self.rebuild_panel_layer();
             self.kick();
-        } else if !self.prefs.shown && !self.panel.shown {
+        } else if !self.prefs.shown {
             trim();
         }
     }
@@ -524,7 +553,7 @@ impl App {
         let fr = self.fr();
         let (session, weekly) = (self.usage.map(|u| u.session), self.usage.map(|u| u.weekly));
         let (session_pct, weekly_pct) = (Self::pct(session), Self::pct(weekly));
-        let session_line = self.window_line(session, ("Session", "Session"));
+        let session_line = self.session_line();
         let weekly_line = self.window_line(weekly, ("All models", "Tous les modèles"));
         let mouse_line = self.mouse_line();
         let (h, g) = (HEADER, GEAR);
@@ -590,9 +619,9 @@ impl App {
             // batterie : vert, orange sous 20 %
             let bat_color = if bat > 0.0 && bat <= LOW_BATTERY as f32 / 100.0 { [1.0, 0.62, 0.25] } else { [0.35, 0.85, 0.45] };
             let (session, weekly) = (self.usage.map_or(0.0, |u| u.session.pct), self.usage.map_or(0.0, |u| u.weekly.pct));
-            pills.extend(bar(bar_bat, bat, bat_color, 8.0).into_iter().chain(bar(bar_tok, session, [0.45, 0.6, 1.0], 8.0)));
+            pills.extend(bar(bar_bat, bat, bat_color, 8.0).into_iter().chain(bar(bar_tok, session, gauge_color(session, [0.45, 0.6, 1.0]), 8.0)));
             if !self.cfg.compact {
-                pills.extend(bar(HEADER + 196.0, weekly, [0.7, 0.55, 1.0], 6.0));
+                pills.extend(bar(HEADER + 196.0, weekly, gauge_color(weekly, [0.7, 0.55, 1.0]), 6.0));
             }
         }
         // bouton des réglages : une pastille discrète sous la roue dentée
@@ -956,7 +985,7 @@ fn main() {
                 Ctl::Seg(_) => Spring::new(0.0, 420.0, 0.78),
                 Ctl::Toggle => Spring::new(0.0, 520.0, 0.75),
             }).collect(),
-            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), pro_days: [(0, 0.0); 7], alerted: false, icon,
+            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), pro_days: [(0, 0.0); 7], forecast: usage::Forecast::Idle, alerted: false, icon,
             taskbar_created: RegisterWindowMessageW(win::w("TaskbarCreated").as_ptr()),
             animating: false, last: Instant::now(),
         }));

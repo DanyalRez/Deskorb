@@ -154,6 +154,17 @@ impl Reader {
         v
     }
 
+    /// Coût équivalent API depuis `since`.
+    pub fn cost_since(&self, since: i64) -> f64 {
+        self.entries.iter().filter(|e| e.t >= since).map(Entry::cost).sum()
+    }
+
+    /// Prévision de la fenêtre de 5 h qui commence à `start` et se réinitialise à `reset`, au % officiel `pct`.
+    pub fn forecast(&self, pct: f32, start: i64, reset: i64, now: i64) -> Forecast {
+        let recent_from = (now - RATE_WINDOW).max(start);
+        forecast(pct, self.cost_since(start), self.cost_since(recent_from), now - recent_from, now, reset)
+    }
+
     /// Totaux des 7 derniers jours locaux (le dernier = aujourd'hui) : (tokens, coût $).
     /// `tz` : décalage de l'heure locale sur UTC, en secondes.
     pub fn daily(&self, now: i64, tz: i64) -> [(u64, f64); 7] {
@@ -299,6 +310,36 @@ fn epoch(ts: &str) -> Option<i64> {
     Some((era * 146097 + doe - 719468) * 86400 + n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?)
 }
 
+/// Le rythme se mesure sur les 30 dernières minutes.
+pub const RATE_WINDOW: i64 = 30 * 60;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Forecast {
+    Idle,         // rien depuis 30 min : pas de prévision
+    Safe,         // à ce rythme, la limite n'est pas atteinte avant la réinitialisation
+    LimitAt(i64), // heure (Unix) où la limite serait atteinte
+}
+
+/// Le % du forfait ne se compte pas en tokens (Anthropic les pondère) : on étalonne le coût équivalent API sur le %
+/// officiel de la fenêtre (x $ = y %), puis on prolonge le rythme des 30 dernières minutes.
+pub fn forecast(pct: f32, window_cost: f64, recent_cost: f64, recent_secs: i64, now: i64, reset: i64) -> Forecast {
+    if recent_cost <= 0.0 || recent_secs <= 0 || window_cost <= 0.0 || pct <= 0.0 {
+        return Forecast::Idle;
+    }
+    if pct >= 1.0 {
+        return Forecast::LimitAt(now);
+    }
+    let pct_per_sec = recent_cost / recent_secs as f64 * (pct as f64 / window_cost);
+    let at = now + ((1.0 - pct as f64) / pct_per_sec).round() as i64;
+    if at >= reset { Forecast::Safe } else { Forecast::LimitAt(at) }
+}
+
+/// « 21:40 », heure locale.
+pub fn clock(t: i64, tz: i64) -> String {
+    let m = (t + tz).div_euclid(60);
+    format!("{:02}:{:02}", m.div_euclid(60).rem_euclid(24), m.rem_euclid(60))
+}
+
 /// Initiale du jour de la semaine (lundi = L / M), `days_ago` jours avant aujourd'hui.
 pub fn weekday_letter(now: i64, tz: i64, days_ago: i64, fr: bool) -> &'static str {
     // le 1er janvier 1970 était un jeudi
@@ -397,6 +438,18 @@ mod tests {
         assert_eq!(weekday_letter(now, tz, 1, true), "S"); // samedi
         assert_eq!(weekday_letter(now, tz, 6, true), "L"); // lundi
         assert_eq!(fmt_cost(12.4, true), "12,40 $");
+    }
+
+    #[test]
+    fn forecast_from_pace() {
+        let (now, reset) = (100_000, 100_000 + 3 * 3600);
+        // 40 % pour 10 $ dans la fenêtre ; 2 $ ces 30 dernières min → 8 % / 30 min → 100 % dans 3 h 45 : après le reset
+        assert_eq!(forecast(0.4, 10.0, 2.0, 1800, now, reset), Forecast::Safe);
+        // même chose au double rythme : 16 % / 30 min → limite dans 1 h 52 min 30 s
+        assert_eq!(forecast(0.4, 10.0, 4.0, 1800, now, reset), Forecast::LimitAt(now + 6750));
+        assert_eq!(forecast(0.4, 10.0, 0.0, 1800, now, reset), Forecast::Idle);
+        assert_eq!(forecast(1.0, 10.0, 1.0, 1800, now, reset), Forecast::LimitAt(now));
+        assert_eq!(clock(1_792_945_975, 3600), "17:32");
         assert_eq!(fmt_cost(12.4, false), "$12.40");
     }
 }
