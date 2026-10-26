@@ -9,6 +9,7 @@ mod mouse;
 mod render;
 mod settings;
 mod tokens;
+mod usage;
 mod win;
 
 use render::{smoothstep, Back, Frame, Layer, Look, Pill, Rgb, Rr, Spring};
@@ -29,6 +30,7 @@ use windows_sys::Win32::{
 
 const WM_TRAY: u32 = WM_APP + 1;
 const WM_USAGE: u32 = WM_APP + 2; // réponse d'Anthropic arrivée (fil réseau → fil de l'interface)
+const WM_LOCAL: u32 = WM_APP + 3; // transcriptions locales relues (fil de lecture → fil de l'interface)
 const T_POLL: usize = 1;
 const ID_SETTINGS: usize = 1;
 const ID_QUIT: usize = 2;
@@ -45,6 +47,9 @@ const USAGE_EVERY: u64 = 120;
 const USAGE_MAX_BACKOFF: u64 = 1800;
 const HEADER: f32 = 30.0; // en-tête du panneau : nom de l'app et bouton des réglages
 const GEAR: (f32, f32, f32) = (PANEL_W - 44.0, 8.0, 32.0); // x, y, côté (relatif au panneau)
+const BACK: (f32, f32, f32) = (12.0, 8.0, 32.0); // retour de la vue Usage Pro
+const PRO_ROWS: usize = 5;
+const PRO_H: f32 = 224.0; // vue Usage Pro, sous l'en-tête
 
 /// Rend à Windows les pages de mémoire inutilisées (pile HTTPS après un relevé, images libérées).
 fn trim() {
@@ -214,6 +219,9 @@ struct App {
     fetching: bool,
     fetched_at: Option<Instant>, // dernière demande à Anthropic
     usage_every: u64,            // secondes entre deux demandes, doublé à chaque 429
+    reading: bool,               // relecture des transcriptions locales en cours
+    pro: bool,                   // le panneau montre la vue Usage Pro
+    pro_all: Vec<(String, u64, f64)>, // projets de la fenêtre, du plus coûteux au moins : nom, tokens, coût $
     alerted: bool,
     icon: HICON,
     taskbar_created: u32,
@@ -301,6 +309,7 @@ impl App {
             m.battery = last; // en veille : on garde la dernière valeur lue
         }
         self.fetch_usage(self.usage_every);
+        self.read_local();
         self.check_low_battery();
         self.refresh_icon();
         if self.panel.shown {
@@ -325,6 +334,44 @@ impl App {
         });
     }
 
+    /// Relit les transcriptions de Claude Code dans un fil à part (seuls les nouveaux octets).
+    fn read_local(&mut self) {
+        if self.reading {
+            return;
+        }
+        self.reading = true;
+        let h = self.panel.hwnd as isize;
+        std::thread::spawn(move || {
+            usage::READER.lock().unwrap().get_or_insert_with(Default::default).update(usage::now());
+            unsafe { PostMessageW(h as HWND, WM_LOCAL, 0, 0) };
+        });
+    }
+
+    unsafe fn local_arrived(&mut self) {
+        self.reading = false;
+        if self.panel.shown && self.pro {
+            self.rebuild_panel_layer();
+            self.kick();
+        } else if !self.prefs.shown && !self.panel.shown {
+            trim();
+        }
+    }
+
+    /// Début de la fenêtre de 5 h : celui d'Anthropic (reset − 5 h), sinon déduit des transcriptions.
+    fn window_start(&self, reader: &usage::Reader) -> i64 {
+        let api = self.usage.and_then(|u| u.session.reset_at)
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64 - 5 * 3600);
+        api.unwrap_or_else(|| reader.local_block_start(usage::now()))
+    }
+
+    /// Bascule entre le panneau et la vue Usage Pro (le panneau change de taille : on le rouvre).
+    unsafe fn toggle_pro(&mut self) {
+        self.pro = !self.pro;
+        self.panel.open.snap(0.0);
+        self.panel.release();
+        self.show_panel();
+    }
+
     /// Réponse d'Anthropic : nouvelles valeurs, ou on garde les anciennes avec la raison de l'échec.
     unsafe fn usage_arrived(&mut self) {
         self.fetching = false;
@@ -342,7 +389,7 @@ impl App {
             trim(); // pas pendant qu'une fenêtre est ouverte : ses images resteraient à recharger
         }
         self.refresh_icon();
-        if self.panel.shown {
+        if self.panel.shown && !self.pro {
             self.rebuild_panel_layer();
             self.kick();
         }
@@ -382,7 +429,7 @@ impl App {
     // ---------- panneau ----------
 
     fn panel_h(&self) -> f32 {
-        HEADER + if self.cfg.compact { 116.0 } else { 236.0 }
+        HEADER + if self.pro { PRO_H } else if self.cfg.compact { 116.0 } else { 236.0 }
     }
 
     fn panel_rr(&self) -> Rr {
@@ -402,8 +449,58 @@ impl App {
         self.kick();
     }
 
+    /// Vue Usage Pro : les projets qui ont coûté le plus dans la fenêtre de 5 h en cours.
+    unsafe fn rebuild_pro_layer(&mut self) {
+        let s = self.scale();
+        let p = self.panel_rr();
+        let fr = self.fr();
+        let px = |v: f32| (v * s) as i32;
+        let rect = |x: f32, y: f32, w: f32, h: f32| RECT { left: px(x), top: px(y), right: px(x + w), bottom: px(y + h) };
+        let t = |txt, r, size: f32, weight, flags, level| win::Text { s: txt, r, size: size * s, weight, flags, level };
+        // try_lock : pendant la première lecture (~1 s), on garde les derniers chiffres au lieu de figer l'interface
+        let fresh = usage::READER.try_lock().ok().and_then(|g| g.as_ref().map(|r| {
+            r.top_projects(self.window_start(r), usize::MAX).into_iter().map(|(n, tk, c)| (n.to_string(), tk, c)).collect()
+        }));
+        let loaded = fresh.is_some() || !self.pro_all.is_empty();
+        if let Some(all) = fresh {
+            self.pro_all = all;
+        }
+        let all = &self.pro_all;
+        let (tokens, cost) = all.iter().fold((0, 0.0), |a, r| (a.0 + r.1, a.1 + r.2));
+        let h = HEADER;
+        let total = usage::fmt_cost(cost, fr);
+        let footer = match (loaded, all.len()) {
+            (false, _) => tr(fr, ("Reading Claude Code history…", "Lecture de l'historique Claude Code…")).to_string(),
+            (true, 0) => tr(fr, ("No Claude Code activity in this window", "Aucune activité Claude Code dans cette fenêtre")).to_string(),
+            (true, n) => format!("{n} {} · {} tokens · {}", tr(fr, ("projects", "projets")), usage::fmt_tokens(tokens, fr),
+                tr(fr, ("API-equivalent cost", "coût équivalent API"))),
+        };
+        let rows = &self.pro_all[..self.pro_all.len().min(PRO_ROWS)];
+        let cells: Vec<(String, String)> = rows.iter().map(|r| (usage::fmt_tokens(r.1, fr), usage::fmt_cost(r.2, fr))).collect();
+        let (b, g) = (BACK, GEAR);
+        let mut texts = vec![
+            t("\u{E76B}", rect(b.0, b.1, b.2, b.2), 12.0, 400, DT_CENTER | DT_VCENTER, 0.75),
+            t("USAGE PRO", rect(50.0, 12.0, 200.0, 20.0), 11.0, 700, DT_LEFT | DT_VCENTER, 0.55),
+            t("\u{E713}", rect(g.0, g.1, g.2, g.2), 14.0, 400, DT_CENTER | DT_VCENTER, 0.75),
+            t(tr(fr, ("Projects · this 5 h window", "Projets · fenêtre de 5 h")), rect(20.0, h + 12.0, 200.0, 22.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
+            t(&total, rect(200.0, h + 8.0, 100.0, 28.0), 18.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
+            t(&footer, rect(20.0, h + PRO_H - 30.0, 280.0, 18.0), 11.5, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.6),
+        ];
+        for (i, (row, (tk, c))) in rows.iter().zip(&cells).enumerate() {
+            let y = h + 44.0 + i as f32 * 30.0;
+            texts.push(t(&row.0, rect(20.0, y, 150.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.95));
+            texts.push(t(tk, rect(170.0, y, 60.0, 20.0), 11.5, 400, DT_RIGHT | DT_VCENTER, 0.6));
+            texts.push(t(c, rect(232.0, y, 68.0, 20.0), 13.0, 600, DT_RIGHT | DT_VCENTER, 0.95));
+        }
+        let ink = look(self.cfg.theme, self.panel.light_back).ink;
+        self.panel.layer = win::text_layer(p.w as usize, p.h as usize, &texts, ink);
+    }
+
     /// Lignes du panneau : souris, puis Claude (session et, en mode détaillé, semaine).
     unsafe fn rebuild_panel_layer(&mut self) {
+        if self.pro {
+            return self.rebuild_pro_layer();
+        }
         let s = self.scale();
         let p = self.panel_rr();
         let px = |v: f32| (v * s) as i32;
@@ -424,6 +521,8 @@ impl App {
             t("Pulsar TenZ", rect(20.0, h + 16.0, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
             t(&bat_txt, rect(180.0, h + 12.0, 120.0, 30.0), 22.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
             t("Claude", rect(20.0, tokens_y, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
+            // chevron : la section s'ouvre sur la vue Usage Pro
+            t("\u{E76C}", rect(74.0, tokens_y + 1.0, 16.0, 20.0), 10.0, 400, DT_CENTER | DT_VCENTER, 0.5),
             t(&session_pct, rect(180.0, tokens_y - 4.0, 120.0, 30.0), 22.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
         ];
         if !self.cfg.compact {
@@ -453,18 +552,28 @@ impl App {
             [Pill { rr: rail, color: look.ink, amount: 0.12 * content, rim: 0.0 },
                 Pill { rr: fill, color, amount: if v > 0.0 { 0.9 * content } else { 0.0 }, rim: 0.4 * content }]
         };
-        let bat = self.battery().map_or(0.0, |b| b as f32 / 100.0);
-        // batterie : vert, orange sous 20 %
-        let bat_color = if bat > 0.0 && bat <= LOW_BATTERY as f32 / 100.0 { [1.0, 0.62, 0.25] } else { [0.35, 0.85, 0.45] };
-        let (session, weekly) = (self.usage.map_or(0.0, |u| u.session.pct), self.usage.map_or(0.0, |u| u.weekly.pct));
-        let mut pills: Vec<Pill> = bar(bar_bat, bat, bat_color, 8.0).into_iter().chain(bar(bar_tok, session, [0.45, 0.6, 1.0], 8.0)).collect();
-        if !self.cfg.compact {
-            pills.extend(bar(HEADER + 196.0, weekly, [0.7, 0.55, 1.0], 6.0));
+        let mut pills: Vec<Pill> = Vec::new();
+        let button = |(x, y, w): (f32, f32, f32)| Pill { rr: Rr { x: p.x + x * s, y: p.y + y * s, w: w * s, h: w * s, r: w * s / 2.0 },
+            color: accent(&look), amount: 0.1 * content, rim: 0.3 * content };
+        if self.pro {
+            // une barre fine par projet, à l'échelle du plus coûteux
+            let top = self.pro_all.first().map_or(0.0, |r| r.2).max(1e-9);
+            for (i, r) in self.pro_all.iter().take(PRO_ROWS).enumerate() {
+                pills.extend(bar(HEADER + 64.0 + i as f32 * 30.0, (r.2 / top) as f32, [0.45, 0.6, 1.0], 3.0));
+            }
+            pills.push(button(BACK));
+        } else {
+            let bat = self.battery().map_or(0.0, |b| b as f32 / 100.0);
+            // batterie : vert, orange sous 20 %
+            let bat_color = if bat > 0.0 && bat <= LOW_BATTERY as f32 / 100.0 { [1.0, 0.62, 0.25] } else { [0.35, 0.85, 0.45] };
+            let (session, weekly) = (self.usage.map_or(0.0, |u| u.session.pct), self.usage.map_or(0.0, |u| u.weekly.pct));
+            pills.extend(bar(bar_bat, bat, bat_color, 8.0).into_iter().chain(bar(bar_tok, session, [0.45, 0.6, 1.0], 8.0)));
+            if !self.cfg.compact {
+                pills.extend(bar(HEADER + 196.0, weekly, [0.7, 0.55, 1.0], 6.0));
+            }
         }
         // bouton des réglages : une pastille discrète sous la roue dentée
-        let g = GEAR;
-        pills.push(Pill { rr: Rr { x: p.x + g.0 * s, y: p.y + g.1 * s, w: g.2 * s, h: g.2 * s, r: g.2 * s / 2.0 },
-            color: accent(&look), amount: 0.1 * content, rim: 0.3 * content });
+        pills.push(button(GEAR));
         let f = Frame {
             back: &self.panel.back,
             layers: &[(&self.panel.layer, (p.x as i32, p.y as i32), content)],
@@ -711,14 +820,20 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_USAGE => {
             app(|a| a.usage_arrived());
         }
-        // clic sur la roue dentée du panneau : les réglages
+        WM_LOCAL => {
+            app(|a| a.local_arrived());
+        }
+        // roue dentée : réglages ; section Claude : vue Usage Pro ; en-tête de la vue : retour
         WM_LBUTTONDOWN => {
             app(|a| {
                 let (s, p) = (a.scale(), a.panel_rr());
                 let (x, y) = (((lp & 0xFFFF) as i16 as f32 - p.x) / s, (((lp >> 16) & 0xFFFF) as i16 as f32 - p.y) / s);
-                let g = GEAR;
-                if (g.0..g.0 + g.2).contains(&x) && (g.1..g.1 + g.2).contains(&y) {
+                let inside = |(bx, by, bw): (f32, f32, f32)| (bx..bx + bw).contains(&x) && (by..by + bw).contains(&y);
+                let claude_top = HEADER + if a.cfg.compact { 56.0 } else { 94.0 };
+                if inside(GEAR) {
                     a.show_prefs();
+                } else if (a.pro && y < HEADER + 4.0) || (!a.pro && y >= claude_top) {
+                    a.toggle_pro();
                 }
             });
         }
@@ -818,7 +933,7 @@ fn main() {
                 Ctl::Seg(_) => Spring::new(0.0, 420.0, 0.78),
                 Ctl::Toggle => Spring::new(0.0, 520.0, 0.75),
             }).collect(),
-            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, alerted: false, icon,
+            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), alerted: false, icon,
             taskbar_created: RegisterWindowMessageW(win::w("TaskbarCreated").as_ptr()),
             animating: false, last: Instant::now(),
         }));
