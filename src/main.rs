@@ -34,6 +34,7 @@ const WM_LOCAL: u32 = WM_APP + 3; // transcriptions locales relues (fil de lectu
 const T_POLL: usize = 1;
 const ID_SETTINGS: usize = 1;
 const ID_QUIT: usize = 2;
+const ID_NOTIFY: usize = 3;
 // pixels logiques (96 dpi) ; la marge autour des formes laisse la place à l'ombre
 const M: f32 = 30.0;
 const GAP: f32 = 4.0; // entre une fenêtre et la barre des tâches
@@ -70,13 +71,14 @@ enum Ctl {
     Toggle,
 }
 
-const ROWS: [(Tr, Ctl); 7] = [
+const ROWS: [(Tr, Ctl); 8] = [
     (("Theme", "Thème"), Ctl::Seg(&[("Liquid Glass", "Liquid Glass"), ("Dark", "Sombre"), ("Light", "Clair")])),
     (("Tray icon", "Icône"), Ctl::Seg(&[("Orbit", "Orbite"), ("Gauges", "Jauges"), ("Percent", "Pourcentage")])),
     (("Panel", "Panneau"), Ctl::Seg(&[("Detailed", "Détaillé"), ("Compact", "Compact")])),
     (("Refresh every", "Actualiser toutes les"), Ctl::Seg(&[("5 s", "5 s"), ("15 s", "15 s"), ("1 min", "1 min")])),
     (("Language", "Langue"), Ctl::Seg(&[("English", "English"), ("Français", "Français")])),
     (("Low battery alert", "Alerte batterie faible"), Ctl::Toggle),
+    (("Claude notifications", "Notifications Claude"), Ctl::Toggle),
     (("Launch at startup", "Lancer au démarrage"), Ctl::Toggle),
 ];
 
@@ -230,6 +232,8 @@ struct App {
     pro_all: Vec<(String, u64, f64)>, // projets de la fenêtre, du plus coûteux au moins : nom, tokens, coût $
     pro_days: [(u64, f64); 7],        // 7 derniers jours locaux (le dernier = aujourd'hui) : tokens, coût $
     forecast: usage::Forecast,        // prévision de la session, recalculée quand les données changent
+    alerted_pct: (Option<std::time::SystemTime>, u8), // fenêtre (heure de reset) et dernier seuil notifié : 1 = 75 %, 2 = 90 %
+    notified_waits: Vec<u64>,         // tours déjà signalés « attend ta réponse »
     alerted: bool,
     icon: HICON,
     taskbar_created: u32,
@@ -380,6 +384,7 @@ impl App {
 
     unsafe fn local_arrived(&mut self) {
         self.reading = false;
+        self.check_waiting();
         if self.panel.shown {
             self.rebuild_panel_layer();
             self.kick();
@@ -407,7 +412,10 @@ impl App {
     unsafe fn usage_arrived(&mut self) {
         self.fetching = false;
         match USAGE.lock().unwrap().take() {
-            Some(Ok(u)) => (self.usage, self.usage_err, self.usage_every) = (Some(u), None, USAGE_EVERY),
+            Some(Ok(u)) => {
+                (self.usage, self.usage_err, self.usage_every) = (Some(u), None, USAGE_EVERY);
+                self.check_thresholds(u.session);
+            }
             Some(Err(e)) => {
                 if e == tokens::Error::RateLimited {
                     self.usage_every = (self.usage_every * 2).min(USAGE_MAX_BACKOFF);
@@ -423,6 +431,43 @@ impl App {
         if self.panel.shown && !self.pro {
             self.rebuild_panel_layer();
             self.kick();
+        }
+    }
+
+    /// Une notification au passage de 75 % puis de 90 % de la session, une seule fois par fenêtre de 5 h.
+    unsafe fn check_thresholds(&mut self, session: tokens::Window) {
+        if self.alerted_pct.0 != session.reset_at {
+            self.alerted_pct = (session.reset_at, 0);
+        }
+        let level = if session.pct >= 0.9 { 2 } else if session.pct >= 0.75 { 1 } else { 0 };
+        if level > self.alerted_pct.1 {
+            self.alerted_pct.1 = level;
+            if self.cfg.notify {
+                let fr = self.fr();
+                let reset = session.left().map_or(String::new(), |d| format!(" · {} {}", tr(fr, ("resets in", "reset dans")), tokens::fmt_left(d, fr)));
+                win::notify(self.panel.hwnd, &format!("Claude : {:.0} %", session.pct * 100.0),
+                    &format!("{}{reset}", tr(fr, ("of your 5-hour session used", "de ta session de 5 h utilisés"))));
+            }
+        }
+    }
+
+    /// « Claude attend ta réponse » : une notification par tour terminé, après `wait_secs` sans réponse.
+    unsafe fn check_waiting(&mut self) {
+        let waits = usage::READER.try_lock().ok().and_then(|g| g.as_ref().map(|r| {
+            r.waiting(usage::now(), self.cfg.wait_secs as i64).into_iter().map(|w| (w.key, r.projects[w.project as usize].clone())).collect::<Vec<_>>()
+        }));
+        for (key, project) in waits.unwrap_or_default() {
+            if self.notified_waits.contains(&key) {
+                continue;
+            }
+            if self.notified_waits.len() > 64 {
+                self.notified_waits.remove(0);
+            }
+            self.notified_waits.push(key);
+            if self.cfg.notify {
+                let fr = self.fr();
+                win::notify(self.panel.hwnd, tr(fr, ("Claude is waiting for you", "Claude attend ta réponse")), &project);
+            }
         }
     }
 
@@ -660,6 +705,7 @@ impl App {
             3 => c.refresh as f32,
             4 => c.french as u8 as f32,
             5 => c.alert as u8 as f32,
+            6 => c.notify as u8 as f32,
             _ => c.startup as u8 as f32,
         }
     }
@@ -792,6 +838,7 @@ impl App {
                 }
             }
             Ctl::Toggle if i == 5 => self.cfg.alert = !self.cfg.alert,
+            Ctl::Toggle if i == 6 => self.cfg.notify = !self.cfg.notify,
             Ctl::Toggle => {
                 self.cfg.startup = !self.cfg.startup;
                 settings::set_startup(self.cfg.startup);
@@ -853,10 +900,19 @@ unsafe extern "system" fn panel_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_RBUTTONUP => {
                 let fr = app(|a| a.fr()).unwrap_or(false);
-                let items = [(ID_SETTINGS, tr(fr, ("Settings…", "Réglages…")), false), (0, "", false), (ID_QUIT, tr(fr, ("Quit", "Quitter")), false)];
+                let notify = app(|a| a.cfg.notify).unwrap_or(true);
+                let items = [(ID_SETTINGS, tr(fr, ("Settings…", "Réglages…")), false),
+                    (ID_NOTIFY, tr(fr, ("Claude notifications", "Notifications Claude")), notify),
+                    (0, "", false), (ID_QUIT, tr(fr, ("Quit", "Quitter")), false)];
                 match win::menu(h, &items) {
                     ID_SETTINGS => {
                         app(|a| a.show_prefs());
+                    }
+                    ID_NOTIFY => {
+                        app(|a| {
+                            a.cfg.notify = !a.cfg.notify;
+                            settings::save(&a.cfg);
+                        });
                     }
                     ID_QUIT => {
                         DestroyWindow(h);
@@ -985,7 +1041,7 @@ fn main() {
                 Ctl::Seg(_) => Spring::new(0.0, 420.0, 0.78),
                 Ctl::Toggle => Spring::new(0.0, 520.0, 0.75),
             }).collect(),
-            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), pro_days: [(0, 0.0); 7], forecast: usage::Forecast::Idle, alerted: false, icon,
+            mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), pro_days: [(0, 0.0); 7], forecast: usage::Forecast::Idle, alerted_pct: (None, 0), notified_waits: Vec::new(), alerted: false, icon,
             taskbar_created: RegisterWindowMessageW(win::w("TaskbarCreated").as_ptr()),
             animating: false, last: Instant::now(),
         }));

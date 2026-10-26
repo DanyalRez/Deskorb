@@ -17,7 +17,9 @@ pub struct Config {
     pub compact: bool,  // panneau sans les lignes de détail
     pub refresh: usize, // index dans REFRESH_SECS
     pub french: bool,
-    pub alert: bool, // notification sous 20 % de batterie
+    pub alert: bool,  // notification sous 20 % de batterie
+    pub notify: bool, // notifications Claude : 75 / 90 % de la session, session qui attend une réponse
+    pub wait_secs: u32, // délai avant « Claude attend ta réponse »
     pub startup: bool,
 }
 
@@ -25,7 +27,7 @@ impl Default for Config {
     fn default() -> Self {
         // français si Windows l'est (langue principale 0x0C), anglais sinon
         let french = unsafe { GetUserDefaultUILanguage() } & 0x3FF == 0x0C;
-        Config { theme: 0, icon: 0, compact: false, refresh: 1, french, alert: true, startup: false }
+        Config { theme: 0, icon: 0, compact: false, refresh: 1, french, alert: true, notify: true, wait_secs: 30, startup: false }
     }
 }
 
@@ -42,6 +44,8 @@ pub fn parse(s: &str) -> Config {
             "refresh" => c.refresh = REFRESH_SECS.iter().position(|&s| Some(s as usize) == n).unwrap_or(1),
             "language" => c.french = v == "fr",
             "low_battery_alert" => c.alert = v != "0",
+            "claude_notifications" => c.notify = v != "0",
+            "wait_secs" => c.wait_secs = v.parse().unwrap_or(30).clamp(5, 600),
             "startup" => c.startup = v != "0",
             _ => {}
         }
@@ -59,9 +63,9 @@ pub fn load() -> Config {
 
 pub fn save(c: &Config) {
     let Some(f) = file() else { return };
-    let s = format!("theme={}\nicon={}\npanel={}\nrefresh={}\nlanguage={}\nlow_battery_alert={}\nstartup={}\n",
+    let s = format!("theme={}\nicon={}\npanel={}\nrefresh={}\nlanguage={}\nlow_battery_alert={}\nclaude_notifications={}\nwait_secs={}\nstartup={}\n",
         c.theme, c.icon, if c.compact { "compact" } else { "detailed" }, REFRESH_SECS[c.refresh],
-        if c.french { "fr" } else { "en" }, c.alert as u8, c.startup as u8);
+        if c.french { "fr" } else { "en" }, c.alert as u8, c.notify as u8, c.wait_secs, c.startup as u8);
     let _ = std::fs::create_dir_all(f.parent().unwrap()).and_then(|_| std::fs::write(f, s));
 }
 
@@ -82,9 +86,9 @@ mod tests {
 
     #[test]
     fn config_round_trip() {
-        let c = Config { theme: 2, icon: 1, compact: true, refresh: 2, french: true, alert: false, startup: true };
+        let c = Config { theme: 2, icon: 1, compact: true, refresh: 2, french: true, alert: false, notify: false, wait_secs: 45, startup: true };
         // une ancienne clé (token_limit) est simplement ignorée
-        let s = "theme=2\nicon=1\npanel=compact\ntoken_limit=250\nrefresh=60\nlanguage=fr\nlow_battery_alert=0\nstartup=1\n";
+        let s = "theme=2\nicon=1\npanel=compact\ntoken_limit=250\nrefresh=60\nlanguage=fr\nlow_battery_alert=0\nclaude_notifications=0\nwait_secs=45\nstartup=1\n";
         assert_eq!(parse(s), c);
         // valeurs hors bornes ramenées dans les clous
         let bad = parse("theme=9\nicon=7\nrefresh=42\n");

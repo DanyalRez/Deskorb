@@ -63,6 +63,15 @@ impl Entry {
 struct FileState {
     offset: u64,
     last_id: u64, // Claude Code écrit une ligne par bloc de contenu, toutes avec le même message.id et le même usage
+    waiting: Option<Waiting>, // la session a fini son tour et attend une réponse
+}
+
+/// Session qui attend : Claude a terminé son tour (`end_turn`) et personne n'a répondu depuis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Waiting {
+    pub since: i64,
+    pub key: u64, // message concerné : une seule notification par tour
+    pub project: u16,
 }
 
 #[derive(Default)]
@@ -83,9 +92,16 @@ pub fn now() -> i64 {
 impl Reader {
     /// Lit ce qui a été ajouté aux transcriptions des 7 derniers jours et oublie le reste.
     pub fn update(&mut self, now: i64) {
-        let Some(home) = std::env::var_os("USERPROFILE") else { return };
+        // DESKORB_PROJECTS : un autre dossier de transcriptions, pour tester sans toucher à ceux de Claude Code
+        let root = match std::env::var_os("DESKORB_PROJECTS") {
+            Some(dir) => PathBuf::from(dir),
+            None => {
+                let Some(home) = std::env::var_os("USERPROFILE") else { return };
+                PathBuf::from(home).join(".claude").join("projects")
+            }
+        };
         let mut files = Vec::new();
-        walk(&PathBuf::from(home).join(".claude").join("projects"), now - KEEP, &mut files);
+        walk(&root, now - KEEP, &mut files);
         for f in files {
             self.scan(&f, now - KEEP);
         }
@@ -106,7 +122,7 @@ impl Reader {
         // ligne par ligne, tampon réutilisé : jamais un fichier entier en mémoire
         let mut r = BufReader::with_capacity(64 * 1024, f);
         let mut buf = Vec::new();
-        let (mut offset, mut last_id) = (st.offset, st.last_id);
+        let (mut offset, mut last_id, mut waiting) = (st.offset, st.last_id, st.waiting);
         loop {
             buf.clear();
             let n = match r.read_until(b'\n', &mut buf) {
@@ -118,13 +134,13 @@ impl Reader {
             }
             offset += n as u64;
             let Ok(line) = std::str::from_utf8(&buf) else { continue };
+            // un sous-agent ne fait pas attendre la session principale
+            let main = !line.contains(r#""isSidechain":true"#);
+            if main && line.contains(r#""type":"user""#) {
+                waiting = None; // tu as répondu (ou un outil a rendu son résultat)
+            }
             let Some(p) = parse(line) else { continue };
             let id = hash(p.id);
-            if id == last_id || p.t < since {
-                last_id = id;
-                continue;
-            }
-            last_id = id;
             let project = match self.by_cwd.get(p.cwd) {
                 Some(&i) => i,
                 None => {
@@ -133,11 +149,25 @@ impl Reader {
                     i
                 }
             };
+            if main {
+                waiting = (p.stop == Some("end_turn")).then_some(Waiting { since: p.t, key: id, project });
+            }
+            if id == last_id || p.t < since {
+                last_id = id;
+                continue;
+            }
+            last_id = id;
             self.entries.push(Entry { t: p.t, project, model: model_index(p.model), input: p.input, output: p.output,
                 cache_5m: p.cache_5m, cache_1h: p.cache_1h, cache_read: p.cache_read });
         }
         let st = self.files.get_mut(path).unwrap();
-        (st.offset, st.last_id) = (offset, last_id);
+        (st.offset, st.last_id, st.waiting) = (offset, last_id, waiting);
+    }
+
+    /// Sessions qui attendent une réponse depuis au moins `idle` secondes (et moins de 15 min : au-delà, c'est
+    /// une session laissée de côté, pas une question en suspens).
+    pub fn waiting(&self, now: i64, idle: i64) -> Vec<Waiting> {
+        self.files.values().filter_map(|f| f.waiting).filter(|w| (idle..15 * 60).contains(&(now - w.since))).collect()
     }
 
     /// Projets classés par coût depuis `since` : (nom, tokens, coût $), les `n` premiers.
@@ -256,6 +286,7 @@ struct Parsed<'a> {
     t: i64,
     model: &'a str,
     cwd: &'a str,
+    stop: Option<&'a str>,
     input: u32,
     output: u32,
     cache_5m: u32,
@@ -285,6 +316,7 @@ fn parse(line: &str) -> Option<Parsed<'_>> {
         t: epoch(str_field(line, "timestamp")?)?,
         model: str_field(msg, "model").unwrap_or(""),
         cwd: str_field(line, "cwd").unwrap_or("?"),
+        stop: str_field(msg, "stop_reason"),
         input: num("input_tokens"),
         output: num("output_tokens"),
         cache_5m,
@@ -438,6 +470,27 @@ mod tests {
         assert_eq!(weekday_letter(now, tz, 1, true), "S"); // samedi
         assert_eq!(weekday_letter(now, tz, 6, true), "L"); // lundi
         assert_eq!(fmt_cost(12.4, true), "12,40 $");
+    }
+
+    #[test]
+    fn waiting_sessions() {
+        let dir = std::env::temp_dir().join(format!("deskorb-wait-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("s.jsonl");
+        let done = LINE.replace(r#""usage":{"#, r#""stop_reason":"end_turn","usage":{"#);
+        let t = parse(&done).unwrap().t;
+        std::fs::write(&f, format!("{LINE}\n{done}\n")).unwrap();
+        let mut r = Reader::default();
+        r.scan(&f, 0);
+        assert_eq!(r.waiting(t + 10, 30), []); // trop tôt
+        assert_eq!(r.waiting(t + 40, 30).len(), 1);
+        assert_eq!(r.waiting(t + 20 * 60, 30), []); // laissée de côté
+        // ta réponse arrive : plus d'attente
+        let user = r#"{"type":"user","message":{"role":"user","content":"ok"},"timestamp":"2026-10-25T16:33:30.000Z"}"#;
+        std::fs::write(&f, format!("{LINE}\n{done}\n{user}\n")).unwrap();
+        r.scan(&f, 0);
+        assert_eq!(r.waiting(t + 40, 30), []);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -187,7 +187,7 @@ pub unsafe fn tray(hwnd: HWND, msg: u32, op: NOTIFY_ICON_MESSAGE, icon: HICON, t
 }
 
 /// Bulle de notification Windows attachée à l'icône (ex. batterie faible).
-pub unsafe fn notify(hwnd: HWND, title: &str, text: &str) {
+pub unsafe fn notify(hwnd: HWND, title: &str, text: &str) -> bool {
     let mut nid: NOTIFYICONDATAW = zeroed();
     nid.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
     nid.hWnd = hwnd;
@@ -200,7 +200,7 @@ pub unsafe fn notify(hwnd: HWND, title: &str, text: &str) {
     for (d, c) in nid.szInfo.iter_mut().take(255).zip(text.encode_utf16()) {
         *d = c;
     }
-    Shell_NotifyIconW(NIM_MODIFY, &nid);
+    Shell_NotifyIconW(NIM_MODIFY, &nid) != 0
 }
 
 /// Décalage de l'heure locale sur UTC, en secondes (heure d'été comprise).
@@ -296,5 +296,22 @@ mod tests {
         // jauge vide : il reste le bout rond à midi
         assert!(sd_arc((0.0, -10.0), c, 10.0, 2.0, 0.0) < 0.0);
         assert!((sd_arc((0.0, 0.0), c, 10.0, 2.0, 1.0) - 9.0).abs() < 1e-4);
+    }
+
+    /// À lancer à la main (`cargo test notify_shows -- --ignored --nocapture`) : affiche une vraie notification.
+    #[test]
+    #[ignore]
+    fn notify_shows() {
+        use super::*;
+        unsafe {
+            let h = CreateWindowExW(0, w("STATIC").as_ptr(), w("t").as_ptr(), 0, 0, 0, 0, 0, null_mut(), null_mut(), null_mut(), null());
+            let icon = text_icon("T");
+            tray(h, WM_APP + 1, NIM_ADD, icon, "Deskorb test");
+            let ok = notify(h, "Deskorb", "Notification de test");
+            println!("Shell_NotifyIcon(NIF_INFO) = {ok}");
+            std::thread::sleep(std::time::Duration::from_secs(8));
+            tray(h, WM_APP + 1, NIM_DELETE, null_mut(), "");
+            assert!(ok);
+        }
     }
 }
