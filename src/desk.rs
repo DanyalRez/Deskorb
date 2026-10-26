@@ -5,7 +5,7 @@
 
 use crate::{
     app, look, lerp,
-    render::{smoothstep, Frame, Layer, Pill, Rgb, Rr},
+    render::{smoothstep, Frame, Layer, Pill, Rgb, Rr, Spring},
     sys, tr, win, App, Surface, M,
 };
 use windows_sys::Win32::{
@@ -39,12 +39,15 @@ pub struct Desk {
     down: bool,
     sys: sys::Sys,
     pub stats: sys::Stats,
+    // valeurs affichées, qui glissent vers les mesures : CPU, RAM, disque, batterie, session, semaine
+    vals: [Spring; 6],
 }
 
 impl Desk {
     pub unsafe fn new(hwnd: HWND, pos: Option<(i32, i32)>, s: f32) -> Self {
         Desk { surf: Surface::new(hwnd), pos: pos.unwrap_or_else(|| default_pos(s)), press: None, locked: false,
-            tracking: false, big: false, right: false, down: true, sys: sys::Sys::default(), stats: sys::Stats::default() }
+            tracking: false, big: false, right: false, down: true, sys: sys::Sys::default(), stats: sys::Stats::default(),
+            vals: [Spring::new(0.0, 90.0, 1.0); 6] }
     }
 
     /// Le carré, dans la fenêtre.
@@ -149,8 +152,12 @@ impl App {
             let probe = self.desk.drop_rr(s);
             self.desk.surf.capture((10.0 * s) as usize, probe);
         }
+        if self.desk.surf.open.x < 0.01 {
+            self.desk.vals.iter_mut().for_each(|v| v.snap(0.0)); // à l'ouverture, tout se remplit depuis zéro
+        }
         self.desk.sys.reset();
         self.desk.stats = self.desk.sys.sample();
+        self.desk_targets();
         SetTimer(self.desk.surf.hwnd, T_SYS, 1000, None);
         self.rebuild_desk_layer();
         self.desk.surf.open.target = 1.0;
@@ -164,11 +171,25 @@ impl App {
         self.kick();
     }
 
+    /// Nouvelles cibles des valeurs affichées : elles y glissent pendant les images suivantes.
+    fn desk_targets(&mut self) {
+        let st = self.desk.stats;
+        let share = |used: u64, total: u64| used as f32 / total.max(1) as f32;
+        let targets = [st.cpu, share(st.ram_used, st.ram_total), share(st.disk_used, st.disk_total),
+            self.battery().map_or(0.0, |b| b as f32 / 100.0), self.usage.map_or(0.0, |u| u.session.pct),
+            self.usage.map_or(0.0, |u| u.weekly.pct)];
+        for (v, t) in self.desk.vals.iter_mut().zip(targets) {
+            v.target = t;
+        }
+        self.kick();
+    }
+
     /// Données changées (relevé, souris, Claude) : on redessine ce qui est visible.
     pub unsafe fn desk_refresh(&mut self) {
         if !self.desk.surf.shown {
             return;
         }
+        self.desk_targets();
         if self.desk.surf.open.target > 0.5 {
             self.rebuild_desk_layer();
         }
@@ -178,8 +199,13 @@ impl App {
     /// Une image d'animation ; fermée et au repos, la fenêtre redevient un simple carré.
     pub unsafe fn desk_tick(&mut self, dt: f32) -> bool {
         let moving = !self.desk.surf.open.rest();
+        let values = self.desk.big && !self.desk.vals.iter().all(|v| v.rest());
         self.desk.surf.open.step(dt);
-        if moving && self.desk.surf.shown {
+        self.desk.vals.iter_mut().for_each(|v| v.step(dt));
+        if values {
+            self.rebuild_desk_layer(); // anneaux et nombres suivent les valeurs qui glissent
+        }
+        if (moving || values) && self.desk.surf.shown {
             self.draw_desk();
         }
         if self.desk.big && self.desk.surf.open.target == 0.0 && self.desk.surf.open.rest() {
@@ -187,7 +213,7 @@ impl App {
             self.apply_desk(); // retour au carré : petite fenêtre, petites images
             crate::trim();
         }
-        moving
+        moving || values
     }
 
     /// Textes et anneaux de la goutte, dans un seul calque (aux dimensions de la goutte).
@@ -198,10 +224,9 @@ impl App {
         let px = |v: f32| (v * s) as i32;
         let rect = |x: f32, y: f32, w: f32, h: f32| RECT { left: px(x), top: px(y), right: px(x + w), bottom: px(y + h) };
         let t = |txt, r, size: f32, weight, flags, level| win::Text { s: txt, r, size: size * s, weight, flags, level };
-        let ram = st.ram_used as f32 / st.ram_total.max(1) as f32;
-        let disk = st.disk_used as f32 / st.disk_total.max(1) as f32;
+        let [cpu, ram, disk, ..] = self.desk.vals.map(|v| v.x.max(0.0));
         let gauges: [(f32, &str, String); 3] = [
-            (st.cpu, "CPU", format!("{} {}", st.threads, tr(fr, ("threads", "threads")))),
+            (cpu, "CPU", format!("{} {}", st.threads, tr(fr, ("threads", "threads")))),
             (ram, "RAM", sys::fmt_gb(st.ram_used, st.ram_total, fr)),
             (disk, tr(fr, ("Disk C:", "Disque C:")), sys::fmt_gb(st.disk_used, st.disk_total, fr)),
         ];
@@ -280,8 +305,7 @@ impl App {
                 [Pill { rr: rail, color: ink, amount: 0.12 * content, rim: 0.0 },
                     Pill { rr: fill, color, amount: if v > 0.0 { 0.9 * content } else { 0.0 }, rim: 0.4 * content }]
             };
-            let bat = self.battery().map_or(0.0, |b| b as f32 / 100.0);
-            let (session, weekly) = (self.usage.map_or(0.0, |u| u.session.pct), self.usage.map_or(0.0, |u| u.weekly.pct));
+            let [.., bat, session, weekly] = d.vals.map(|v| v.x.max(0.0));
             let white = crate::accent(&look);
             pills.extend(bar(205.0, bat, crate::battery_color(bat, white), 5.0));
             pills.extend(bar(241.0, session, crate::gauge_color(session, white), 5.0));
@@ -372,8 +396,7 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                 T_SYS => {
                     app(|a| {
                         a.desk.stats = a.desk.sys.sample();
-                        a.rebuild_desk_layer();
-                        a.draw_desk();
+                        a.desk_targets(); // les anneaux glissent vers la nouvelle mesure
                     });
                 }
                 _ => {}
