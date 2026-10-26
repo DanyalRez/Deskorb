@@ -241,7 +241,7 @@ impl App {
         let n = (RING * s).round() as usize;
         for (i, g) in gauges.iter().enumerate() {
             let (ox, oy) = (((15.0 + i as f32 * 90.0 + (90.0 - RING) / 2.0) * s) as usize, (40.0 * s) as usize);
-            for (k, p) in win::ring(n, g.0, ink).into_iter().enumerate() {
+            for (k, p) in win::ring(n, g.0, crate::gauge_color(g.0, ink), ink).into_iter().enumerate() {
                 let (x, y) = (ox + k % n, oy + k / n);
                 if x < lw && y < lh {
                     let d = &mut layer.px[y * lw + x];
@@ -282,9 +282,10 @@ impl App {
             };
             let bat = self.battery().map_or(0.0, |b| b as f32 / 100.0);
             let (session, weekly) = (self.usage.map_or(0.0, |u| u.session.pct), self.usage.map_or(0.0, |u| u.weekly.pct));
-            pills.extend(bar(205.0, bat, [0.35, 0.85, 0.45], 5.0));
-            pills.extend(bar(241.0, session, crate::gauge_color(session, [0.45, 0.6, 1.0]), 5.0));
-            pills.extend(bar(291.0, weekly, crate::gauge_color(weekly, [0.7, 0.55, 1.0]), 4.0));
+            let white = crate::accent(&look);
+            pills.extend(bar(205.0, bat, crate::battery_color(bat, white), 5.0));
+            pills.extend(bar(241.0, session, crate::gauge_color(session, white), 5.0));
+            pills.extend(bar(291.0, weekly, crate::gauge_color(weekly, white), 4.0));
             let l = LOCK;
             pills.push(Pill { rr: Rr { x: p.x + l.0 * s, y: p.y + l.1 * s, w: l.2 * s, h: l.2 * s, r: l.2 * s / 2.0 },
                 color: crate::accent(&look), amount: if d.locked { 0.3 } else { 0.1 } * content, rim: 0.3 * content });

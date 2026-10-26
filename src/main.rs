@@ -114,9 +114,17 @@ fn look(theme: usize, light_back: bool) -> Look {
     }
 }
 
-/// Jauge Claude : bleu, orange au-dessus de 75 %, rouge au-dessus de 90 %.
+const ORANGE: Rgb = [1.0, 0.62, 0.25];
+const RED: Rgb = [1.0, 0.36, 0.36];
+
+/// Jauge d'usage (Claude, CPU, RAM, disque) : couleur normale, orange dès 75 %, rouge dès 90 %.
 fn gauge_color(pct: f32, normal: Rgb) -> Rgb {
-    if pct >= 0.9 { [1.0, 0.36, 0.36] } else if pct >= 0.75 { [1.0, 0.62, 0.25] } else { normal }
+    if pct >= 0.9 { RED } else if pct >= 0.75 { ORANGE } else { normal }
+}
+
+/// Jauge de batterie : couleur normale, orange à 50 % ou moins, rouge à 20 % ou moins.
+fn battery_color(level: f32, normal: Rgb) -> Rgb {
+    if level <= 0.2 { RED } else if level <= 0.5 { ORANGE } else { normal }
 }
 
 /// Couleur des éléments posés sur le verre : blanc sur verre sombre, noir sur verre clair.
@@ -658,7 +666,7 @@ impl App {
             // une barre fine par projet, à l'échelle du plus coûteux
             let top = self.pro_all.first().map_or(0.0, |r| r.2).max(1e-9);
             for (i, r) in self.pro_all.iter().take(PRO_ROWS).enumerate() {
-                pills.extend(bar(HEADER + 64.0 + i as f32 * 30.0, (r.2 / top) as f32, [0.45, 0.6, 1.0], 3.0));
+                pills.extend(bar(HEADER + 64.0 + i as f32 * 30.0, (r.2 / top) as f32, accent(&look), 3.0));
             }
             // 7 jours : une barre par jour à l'échelle du plus cher, aujourd'hui en plein
             let max = self.pro_days.iter().map(|d| d.1).fold(0.0, f64::max).max(1e-9);
@@ -667,17 +675,17 @@ impl App {
                 let rr = Rr { x: p.x + (20.0 + i as f32 * 40.0 + 9.0) * s, y: p.y + (HEADER + CHART.0 + CHART.1 - hgt) * s,
                     w: 22.0 * s, h: hgt * s, r: 5.0_f32.min(hgt / 2.0) * s };
                 let amount = if i == 6 { 0.9 } else if d.0 == 0 { 0.12 } else { 0.55 };
-                pills.push(Pill { rr, color: [0.45, 0.6, 1.0], amount: amount * content, rim: 0.35 * content });
+                pills.push(Pill { rr, color: accent(&look), amount: amount * content, rim: 0.35 * content });
             }
             pills.push(button(BACK));
         } else {
             let bat = self.battery().map_or(0.0, |b| b as f32 / 100.0);
             // batterie : vert, orange sous 20 %
-            let bat_color = if bat > 0.0 && bat <= LOW_BATTERY as f32 / 100.0 { [1.0, 0.62, 0.25] } else { [0.35, 0.85, 0.45] };
+            let bat_color = battery_color(bat, accent(&look));
             let (session, weekly) = (self.usage.map_or(0.0, |u| u.session.pct), self.usage.map_or(0.0, |u| u.weekly.pct));
-            pills.extend(bar(bar_bat, bat, bat_color, 8.0).into_iter().chain(bar(bar_tok, session, gauge_color(session, [0.45, 0.6, 1.0]), 8.0)));
+            pills.extend(bar(bar_bat, bat, bat_color, 8.0).into_iter().chain(bar(bar_tok, session, gauge_color(session, accent(&look)), 8.0)));
             if !self.cfg.compact {
-                pills.extend(bar(HEADER + 196.0, weekly, gauge_color(weekly, [0.7, 0.55, 1.0]), 6.0));
+                pills.extend(bar(HEADER + 196.0, weekly, gauge_color(weekly, accent(&look)), 6.0));
             }
         }
         // bouton des réglages : une pastille discrète sous la roue dentée
