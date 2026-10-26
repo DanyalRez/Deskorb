@@ -261,6 +261,18 @@ pub fn https(method: &str, host: &str, path: &str, headers: &str, body: Option<&
     }
 }
 
+/// Accroche la fenêtre au bureau, comme un gadget (repris de DESKTOUCH) : elle a le bureau pour propriétaire,
+/// reste donc juste au-dessus du fond d'écran, sous toutes les autres fenêtres, et Win + D ne la cache pas.
+pub unsafe fn pin_to_desktop(hwnd: HWND) {
+    let desk = FindWindowW(w("Progman").as_ptr(), null());
+    if desk.is_null() {
+        return;
+    }
+    SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, desk as isize);
+    // tout en bas : une fenêtre possédée ne passe jamais sous son propriétaire, elle s'arrête donc sur le bureau
+    SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
 /// Menu contextuel natif (id 0 = séparateur, booléen = coché) ; renvoie l'identifiant choisi (0 si rien).
 pub unsafe fn menu(hwnd: HWND, entries: &[(usize, &str, bool)]) -> usize {
     let m = CreatePopupMenu();

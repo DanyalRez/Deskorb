@@ -4,6 +4,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod desk;
 mod mouse;
 #[allow(dead_code)] // copié de DESKTOUCH, tout n'est pas utilisé
 mod render;
@@ -71,7 +72,7 @@ enum Ctl {
     Toggle,
 }
 
-const ROWS: [(Tr, Ctl); 8] = [
+const ROWS: [(Tr, Ctl); 9] = [
     (("Theme", "Thème"), Ctl::Seg(&[("Liquid Glass", "Liquid Glass"), ("Dark", "Sombre"), ("Light", "Clair")])),
     (("Tray icon", "Icône"), Ctl::Seg(&[("Orbit", "Orbite"), ("Gauges", "Jauges"), ("Percent", "Pourcentage")])),
     (("Panel", "Panneau"), Ctl::Seg(&[("Detailed", "Détaillé"), ("Compact", "Compact")])),
@@ -79,6 +80,7 @@ const ROWS: [(Tr, Ctl); 8] = [
     (("Language", "Langue"), Ctl::Seg(&[("English", "English"), ("Français", "Français")])),
     (("Low battery alert", "Alerte batterie faible"), Ctl::Toggle),
     (("Claude notifications", "Notifications Claude"), Ctl::Toggle),
+    (("Desktop widget", "Widget de bureau"), Ctl::Toggle),
     (("Launch at startup", "Lancer au démarrage"), Ctl::Toggle),
 ];
 
@@ -162,8 +164,14 @@ impl Surface {
         let (ww, wh) = (((w + 2.0 * M) * s) as i32, ((h + 2.0 * M) * s) as i32);
         let right = mi.rcWork.right - ((GAP + 8.0 - M) * s) as i32;
         let bottom = mi.rcWork.bottom - ((GAP - M) * s) as i32;
+        self.place(RECT { left: right - ww, top: bottom - wh, right, bottom });
+    }
+
+    /// Fenêtre à cette place ; la bitmap est refaite seulement si la taille change.
+    unsafe fn place(&mut self, r: RECT) {
         let old = self.size();
-        self.win = RECT { left: right - ww, top: bottom - wh, right, bottom };
+        self.win = r;
+        let (ww, wh) = (r.right - r.left, r.bottom - r.top);
         if old != self.size() || self.dib.is_null() {
             if !self.dib.is_null() {
                 DeleteObject(self.dib);
@@ -220,6 +228,7 @@ struct App {
     cfg: Config,
     panel: Surface,
     prefs: Surface,
+    desk: desk::Desk,
     p_rows: Vec<Spring>, // une par ligne : case choisie ou interrupteur
     mouse: Option<mouse::Mouse>,
     usage: Option<tokens::Usage>,     // dernières valeurs reçues, gardées si le réseau tombe
@@ -500,6 +509,33 @@ impl App {
         };
         win::tray(self.panel.hwnd, WM_TRAY, NIM_MODIFY, self.icon, &self.tip());
         DestroyIcon(old);
+        if self.desk.surf.shown {
+            self.desk.draw(self.scale(), self.cfg.theme, self.desk_value());
+        }
+    }
+
+    /// Valeur du logo du widget : la batterie, sinon la session Claude.
+    fn desk_value(&self) -> Option<f32> {
+        self.battery().map(|b| b as f32 / 100.0).or(self.usage.map(|u| u.session.pct))
+    }
+
+    /// Affiche ou retire le widget de bureau selon le réglage.
+    unsafe fn apply_desk(&mut self) {
+        if self.cfg.desk {
+            let (s, theme, v) = (self.scale(), self.cfg.theme, self.desk_value());
+            self.desk.show(s, theme, v);
+        } else {
+            self.desk.hide();
+        }
+    }
+
+    /// Fin d'un déplacement du widget : `left`, `top` = nouvelle place de sa fenêtre.
+    unsafe fn desk_moved(&mut self, left: i32, top: i32) {
+        let m = (M * self.scale()) as i32;
+        self.desk.pos = (left + m, top + m);
+        self.cfg.desk_pos = Some(self.desk.pos);
+        settings::save(&self.cfg);
+        self.apply_desk(); // nouvelle photo du fond à la nouvelle place
     }
 
     // ---------- panneau ----------
@@ -706,6 +742,7 @@ impl App {
             4 => c.french as u8 as f32,
             5 => c.alert as u8 as f32,
             6 => c.notify as u8 as f32,
+            7 => c.desk as u8 as f32,
             _ => c.startup as u8 as f32,
         }
     }
@@ -839,6 +876,10 @@ impl App {
             }
             Ctl::Toggle if i == 5 => self.cfg.alert = !self.cfg.alert,
             Ctl::Toggle if i == 6 => self.cfg.notify = !self.cfg.notify,
+            Ctl::Toggle if i == 7 => {
+                self.cfg.desk = !self.cfg.desk;
+                self.apply_desk();
+            }
             Ctl::Toggle => {
                 self.cfg.startup = !self.cfg.startup;
                 settings::set_startup(self.cfg.startup);
@@ -847,7 +888,13 @@ impl App {
         self.p_rows[i].target = self.row_value(i);
         settings::save(&self.cfg);
         match i {
-            0 | 4 => self.rebuild_prefs_layer(), // couleurs ou langue : tous les textes changent
+            0 => {
+                self.rebuild_prefs_layer(); // nouvelles couleurs de texte
+                if self.desk.surf.shown {
+                    self.desk.draw(self.scale(), self.cfg.theme, self.desk_value());
+                }
+            }
+            4 => self.rebuild_prefs_layer(), // langue : tous les textes changent
             1 => self.refresh_icon(),
             _ => {}
         }
@@ -1029,6 +1076,11 @@ fn main() {
         let new_window = |c: &[u16]| CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TOPMOST,
             c.as_ptr(), c.as_ptr(), WS_POPUP, 0, 0, 1, 1, null_mut(), null_mut(), inst, null());
         let (h, ph) = (new_window(&panel_class), new_window(&prefs_class));
+        // widget de bureau : jamais au premier plan, jamais activé
+        let desk_class = win::w("DESKORB_DESK");
+        class(&desk_class, Some(desk::proc), inst);
+        let dh = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+            desk_class.as_ptr(), desk_class.as_ptr(), WS_POPUP, 0, 0, 1, 1, null_mut(), null_mut(), inst, null());
         let cfg = settings::load();
         if cfg.startup {
             settings::set_startup(true);
@@ -1036,7 +1088,7 @@ fn main() {
         let icon = win::text_icon("–");
         win::tray(h, WM_TRAY, NIM_ADD, icon, "Deskorb");
         APP.with_borrow_mut(|a| *a = Some(App {
-            cfg, panel: Surface::new(h), prefs: Surface::new(ph),
+            cfg, panel: Surface::new(h), prefs: Surface::new(ph), desk: desk::Desk::new(dh, cfg.desk_pos, GetDpiForWindow(h) as f32 / 96.0),
             p_rows: ROWS.iter().map(|(_, c)| match c {
                 Ctl::Seg(_) => Spring::new(0.0, 420.0, 0.78),
                 Ctl::Toggle => Spring::new(0.0, 520.0, 0.75),
@@ -1045,7 +1097,10 @@ fn main() {
             taskbar_created: RegisterWindowMessageW(win::w("TaskbarCreated").as_ptr()),
             animating: false, last: Instant::now(),
         }));
-        app(|a| a.refresh());
+        app(|a| {
+            a.refresh();
+            a.apply_desk();
+        });
         SetTimer(h, T_POLL, settings::REFRESH_SECS[cfg.refresh] * 1000, None);
 
         let mut msg: MSG = zeroed();
