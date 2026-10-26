@@ -9,6 +9,7 @@ mod mouse;
 #[allow(dead_code)] // copié de DESKTOUCH, tout n'est pas utilisé
 mod render;
 mod settings;
+mod sys;
 mod tokens;
 mod usage;
 mod win;
@@ -509,33 +510,7 @@ impl App {
         };
         win::tray(self.panel.hwnd, WM_TRAY, NIM_MODIFY, self.icon, &self.tip());
         DestroyIcon(old);
-        if self.desk.surf.shown {
-            self.desk.draw(self.scale(), self.cfg.theme, self.desk_value());
-        }
-    }
-
-    /// Valeur du logo du widget : la batterie, sinon la session Claude.
-    fn desk_value(&self) -> Option<f32> {
-        self.battery().map(|b| b as f32 / 100.0).or(self.usage.map(|u| u.session.pct))
-    }
-
-    /// Affiche ou retire le widget de bureau selon le réglage.
-    unsafe fn apply_desk(&mut self) {
-        if self.cfg.desk {
-            let (s, theme, v) = (self.scale(), self.cfg.theme, self.desk_value());
-            self.desk.show(s, theme, v);
-        } else {
-            self.desk.hide();
-        }
-    }
-
-    /// Fin d'un déplacement du widget : `left`, `top` = nouvelle place de sa fenêtre.
-    unsafe fn desk_moved(&mut self, left: i32, top: i32) {
-        let m = (M * self.scale()) as i32;
-        self.desk.pos = (left + m, top + m);
-        self.cfg.desk_pos = Some(self.desk.pos);
-        settings::save(&self.cfg);
-        self.apply_desk(); // nouvelle photo du fond à la nouvelle place
+        self.desk_refresh();
     }
 
     // ---------- panneau ----------
@@ -890,9 +865,7 @@ impl App {
         match i {
             0 => {
                 self.rebuild_prefs_layer(); // nouvelles couleurs de texte
-                if self.desk.surf.shown {
-                    self.desk.draw(self.scale(), self.cfg.theme, self.desk_value());
-                }
+                self.desk_refresh();
             }
             4 => self.rebuild_prefs_layer(), // langue : tous les textes changent
             1 => self.refresh_icon(),
@@ -930,7 +903,8 @@ impl App {
                 w.release();
             }
         }
-        self.animating = panel_moving || prefs_moving;
+        let desk_moving = self.desk_tick(dt);
+        self.animating = panel_moving || prefs_moving || desk_moving;
     }
 }
 

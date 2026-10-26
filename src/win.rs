@@ -155,6 +155,46 @@ pub fn logo_alpha(style: usize, n: usize, a: Option<f32>, b: Option<f32>) -> Vec
     px
 }
 
+/// Jauge en anneau du widget (n × n, prémultipliée) : arc de 300° ouvert en bas, rempli à `frac` en dégradé
+/// vert → jaune → rouge selon la charge, sur un rail discret, avec une graduation en pointillés autour.
+pub fn ring(n: usize, frac: f32, ink: Rgb) -> Vec<[f32; 4]> {
+    use std::f32::consts::PI;
+    let (c, r, w) = (n as f32 / 2.0, n as f32 * 0.38, n as f32 * 0.075);
+    let (sweep, start) = (PI * 5.0 / 3.0, -PI * 5.0 / 6.0); // 300°, départ à 7 h
+    let (cs, sn) = (start.cos(), start.sin());
+    let stops: [Rgb; 3] = [[0.30, 0.88, 0.55], [0.98, 0.85, 0.30], [1.0, 0.42, 0.32]];
+    let grad = |t: f32| -> Rgb {
+        let (a, b, k) = if t < 0.5 { (stops[0], stops[1], t * 2.0) } else { (stops[1], stops[2], t * 2.0 - 1.0) };
+        std::array::from_fn(|i| a[i] + (b[i] - a[i]) * k)
+    };
+    let fill = frac.clamp(0.0, 1.0) * sweep;
+    let mut px = Vec::with_capacity(n * n);
+    for j in 0..n {
+        for i in 0..n {
+            let (x, y) = (i as f32 + 0.5 - c, j as f32 + 0.5 - c);
+            // repère tourné : l'angle 0 de sd_arc tombe au départ de la jauge
+            let p = (x * cs + y * sn, y * cs - x * sn);
+            let cov = |d: f32| (0.5 - d).clamp(0.0, 1.0);
+            let track = cov(sd_arc(p, (0.0, 0.0), r, w, sweep));
+            let on = if fill > 0.0 { cov(sd_arc(p, (0.0, 0.0), r, w, fill)) } else { 0.0 };
+            // pointillés tous les 10°, sur la portée de la jauge
+            let a = p.0.atan2(-p.1).rem_euclid(2.0 * PI);
+            let tick = if a <= sweep + 0.01 {
+                let k = (a / (PI / 18.0)).round() * (PI / 18.0);
+                let d = (x.hypot(y) - n as f32 * 0.455).hypot((a - k) * n as f32 * 0.455);
+                cov(d - n as f32 * 0.016) * 0.35
+            } else { 0.0 };
+            // dans l'ouverture du bas : la couleur du bout le plus proche (le bouchon de départ reste vert)
+            let t = if a <= sweep { a / sweep } else if a > (sweep + 2.0 * PI) / 2.0 { 0.0 } else { 1.0 };
+            let col = grad(t);
+            let base = (0.14 * track).max(tick);
+            let alpha = on + base * (1.0 - on);
+            px.push(std::array::from_fn(|k| if k == 3 { alpha } else { col[k] * on + ink[k] * base * (1.0 - on) }));
+        }
+    }
+    px
+}
+
 /// Icône blanche dont seule l'opacité varie, pixel par pixel.
 // shortcut: encre blanche fixe, illisible sur barre des tâches claire ; lire SystemUsesLightTheme au besoin
 unsafe fn alpha_icon(n: usize, alpha: &[f32]) -> HICON {
