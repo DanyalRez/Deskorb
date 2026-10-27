@@ -1,12 +1,12 @@
 //! Widget de bureau, façon DESKTOUCH : un carré de verre posé sur le fond d'écran (sous toutes les fenêtres,
 //! toujours là après Win + D) avec le logo Orbite en direct. Au survol, un panneau en sort comme une goutte :
-//! système (anneaux CPU / RAM / disque), souris, Claude. Un clic sur le carré le garde ouvert (verrou).
+//! système (anneaux CPU / température CPU / RAM, GPU / mémoire vidéo / température GPU, réseau), souris, Claude. Un clic sur le carré le garde ouvert (verrou).
 //! Fermé, la fenêtre ne fait que la taille du carré : ses images restent petites.
 
 use crate::{
     app, look, lerp,
     render::{smoothstep, Frame, Layer, Pill, Rgb, Rr, Spring},
-    sys, tr, win, App, Surface, M,
+    gpu, sys, tr, win, App, Surface, M,
 };
 use windows_sys::Win32::{
     Foundation::*,
@@ -19,7 +19,8 @@ const SQ_R: f32 = 15.0;
 const GLYPH: f32 = 30.0;
 const GAP: f32 = 8.0; // entre le carré et la goutte ouverte
 const PW: f32 = 300.0;
-const PH: f32 = 322.0;
+const PH: f32 = 452.0;
+const DY: f32 = 130.0; // tout ce qui suit les deux rangées d'anneaux et le réseau
 const PR: f32 = 26.0;
 const RING: f32 = 70.0;
 const LOCK: (f32, f32, f32) = (PW - 44.0, 8.0, 32.0); // bouton verrou (x, y, côté), relatif à la goutte
@@ -28,26 +29,34 @@ const T_OPEN: usize = 11;
 const T_CLOSE: usize = 12;
 const T_SYS: usize = 13;
 
+thread_local! {
+    // ouverture au survol en attente : hors de l'état de l'app, qui peut être occupé (redessin) quand
+    // Windows envoie les messages de souris, et qui sinon les perdrait
+    static OPENING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 pub struct Desk {
     pub surf: Surface,
     pub pos: (i32, i32),       // coin haut-gauche du carré, à l'écran
     press: Option<(i32, i32)>, // bouton enfoncé sur le carré : clic, ou début d'un déplacement
     pub locked: bool,          // ouvert par un clic : reste ouvert jusqu'au clic suivant
-    tracking: bool,            // la souris est sur le widget
     big: bool,                 // fenêtre agrandie pour la goutte
     right: bool,               // la goutte s'ouvre vers la droite / vers le bas
     down: bool,
     sys: sys::Sys,
     pub stats: sys::Stats,
-    // valeurs affichées, qui glissent vers les mesures : CPU, RAM, disque, batterie, session, semaine
-    vals: [Spring; 6],
+    gpu: Option<gpu::Gpu>, // NVML, ouvert seulement goutte ouverte
+    gstats: gpu::Stats,
+    // valeurs affichées, qui glissent vers les mesures :
+    // CPU, RAM, température CPU (÷ 100), GPU, mémoire vidéo, température GPU (÷ 100), batterie, session, semaine
+    vals: [Spring; 9],
 }
 
 impl Desk {
     pub unsafe fn new(hwnd: HWND, pos: Option<(i32, i32)>, s: f32) -> Self {
         Desk { surf: Surface::new(hwnd), pos: pos.unwrap_or_else(|| default_pos(s)), press: None, locked: false,
-            tracking: false, big: false, right: false, down: true, sys: sys::Sys::default(), stats: sys::Stats::default(),
-            vals: [Spring::new(0.0, 90.0, 1.0); 6] }
+            big: false, right: false, down: true, sys: sys::Sys::default(), stats: sys::Stats::default(),
+            gpu: None, gstats: gpu::Stats::default(), vals: [Spring::new(0.0, 90.0, 1.0); 9] }
     }
 
     /// Le carré, dans la fenêtre.
@@ -157,6 +166,10 @@ impl App {
         }
         self.desk.sys.reset();
         self.desk.stats = self.desk.sys.sample();
+        if self.desk.gpu.is_none() {
+            self.desk.gpu = gpu::Gpu::open();
+        }
+        self.desk.gstats = self.desk.gpu.as_ref().map(gpu::Gpu::sample).unwrap_or_default();
         self.desk_targets();
         SetTimer(self.desk.surf.hwnd, T_SYS, 1000, None);
         self.rebuild_desk_layer();
@@ -175,8 +188,10 @@ impl App {
     fn desk_targets(&mut self) {
         let st = self.desk.stats;
         let share = |used: u64, total: u64| used as f32 / total.max(1) as f32;
-        let targets = [st.cpu, share(st.ram_used, st.ram_total), share(st.disk_used, st.disk_total),
-            self.battery().map_or(0.0, |b| b as f32 / 100.0), self.usage.map_or(0.0, |u| u.session.pct),
+        let g = self.desk.gstats;
+        // shortcut: température CPU à 0 tant que le pilote PawnIO n'est pas branché (tranche suivante)
+        let targets = [st.cpu, share(st.ram_used, st.ram_total), 0.0,
+            g.load, share(g.vram_used, g.vram_total), g.temp / 100.0, self.battery().map_or(0.0, |b| b as f32 / 100.0), self.usage.map_or(0.0, |u| u.session.pct),
             self.usage.map_or(0.0, |u| u.weekly.pct)];
         for (v, t) in self.desk.vals.iter_mut().zip(targets) {
             v.target = t;
@@ -210,6 +225,7 @@ impl App {
         }
         if self.desk.big && self.desk.surf.open.target == 0.0 && self.desk.surf.open.rest() {
             self.desk.surf.layer = Layer::empty();
+            self.desk.gpu = None; // libère NVML
             self.apply_desk(); // retour au carré : petite fenêtre, petites images
             crate::trim();
         }
@@ -224,13 +240,27 @@ impl App {
         let px = |v: f32| (v * s) as i32;
         let rect = |x: f32, y: f32, w: f32, h: f32| RECT { left: px(x), top: px(y), right: px(x + w), bottom: px(y + h) };
         let t = |txt, r, size: f32, weight, flags, level| win::Text { s: txt, r, size: size * s, weight, flags, level };
-        let [cpu, ram, disk, ..] = self.desk.vals.map(|v| v.x.max(0.0));
-        let gauges: [(f32, &str, String); 3] = [
-            (cpu, "CPU", format!("{} {}", st.threads, tr(fr, ("threads", "threads")))),
-            (ram, "RAM", sys::fmt_gb(st.ram_used, st.ram_total, fr)),
-            (disk, tr(fr, ("Disk C:", "Disque C:")), sys::fmt_gb(st.disk_used, st.disk_total, fr)),
+        let [cpu, ram, ctemp, gload, vram, gtemp, ..] = self.desk.vals.map(|v| v.x.max(0.0));
+        let gs = self.desk.gstats;
+        let has_gpu = self.desk.gpu.is_some();
+        let no_gpu = tr(fr, ("No NVIDIA GPU", "Pas de GPU NVIDIA"));
+        // (valeur 0–1, unité, nom, détail) ; la température s'affiche en °C (÷ 100 pour l'anneau et les seuils)
+        let gauges: [(f32, &str, &str, String); 6] = [
+            (cpu, "%", "CPU", format!("{} threads", st.threads)),
+            (ctemp, "°C", tr(fr, ("CPU temp.", "Temp. CPU")), tr(fr, ("needs PawnIO", "attend PawnIO")).into()),
+            (ram, "%", "RAM", sys::fmt_gb(st.ram_used, st.ram_total, fr)),
+            (gload, "%", "GPU", if has_gpu { tr(fr, ("load", "charge")).into() } else { no_gpu.into() }),
+            (vram, "%", tr(fr, ("Video memory", "Mémoire vidéo")), if has_gpu { sys::fmt_gb(gs.vram_used, gs.vram_total, fr) } else { "—".into() }),
+            (gtemp, "°C", tr(fr, ("GPU temp.", "Temp. GPU")), if has_gpu { tr(fr, ("sensor", "capteur")).into() } else { "—".into() }),
         ];
-        let values: Vec<String> = gauges.iter().map(|g| format!("{:.0}", g.0 * 100.0)).collect();
+        // sans carte NVIDIA, la rangée GPU affiche des tirets
+        let values: Vec<String> = gauges.iter().enumerate().map(|(i, g)| match i {
+            1 => "—".into(), // température CPU : pas encore de pilote
+            0 | 2 => format!("{:.0}", g.0 * 100.0),
+            _ if has_gpu => format!("{:.0}", g.0 * 100.0),
+            _ => "—".into(),
+        }).collect();
+        let net = format!("↓ {}   ↑ {}", sys::fmt_rate(st.down, fr), sys::fmt_rate(st.up, fr));
         let bat_txt = self.battery().map_or("—".into(), |b| format!("{b} %"));
         let mouse_line = self.mouse_line();
         let (session, weekly) = (self.usage.map(|u| u.session), self.usage.map(|u| u.weekly));
@@ -242,30 +272,34 @@ impl App {
             t("DESKORB", rect(20.0, 12.0, 160.0, 20.0), 11.0, 700, DT_LEFT | DT_VCENTER, 0.55),
             // verrou : fermé = la goutte reste ouverte
             t(if self.desk.locked { "\u{E72E}" } else { "\u{E785}" }, rect(l.0, l.1, l.2, l.2), 13.0, 400, DT_CENTER | DT_VCENTER, 0.75),
-            t("Pulsar TenZ", rect(20.0, 166.0, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
-            t(&bat_txt, rect(180.0, 164.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
-            t(&mouse_line, rect(20.0, 186.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
-            t("Claude", rect(20.0, 216.0, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
-            t(&session_pct, rect(180.0, 214.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
-            t(&session_line, rect(20.0, 248.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
-            t(tr(fr, ("Weekly", "Hebdomadaire")), rect(20.0, 270.0, 180.0, 18.0), 12.0, 600, DT_LEFT | DT_VCENTER, 0.9),
-            t(&weekly_pct, rect(180.0, 269.0, 100.0, 20.0), 13.0, 600, DT_RIGHT | DT_VCENTER, 0.9),
-            t(&weekly_line, rect(20.0, 298.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
+            t(tr(fr, ("Network", "Réseau")), rect(20.0, 264.0, 100.0, 18.0), 12.0, 600, DT_LEFT | DT_VCENTER, 0.9),
+            t(&net, rect(100.0, 264.0, 180.0, 18.0), 12.0, 600, DT_RIGHT | DT_VCENTER, 0.85),
+            t("Pulsar TenZ", rect(20.0, DY + 166.0, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
+            t(&bat_txt, rect(180.0, DY + 164.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
+            t(&mouse_line, rect(20.0, DY + 186.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
+            t("Claude", rect(20.0, DY + 216.0, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
+            t(&session_pct, rect(180.0, DY + 214.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
+            t(&session_line, rect(20.0, DY + 248.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
+            t(tr(fr, ("Weekly", "Hebdomadaire")), rect(20.0, DY + 270.0, 180.0, 18.0), 12.0, 600, DT_LEFT | DT_VCENTER, 0.9),
+            t(&weekly_pct, rect(180.0, DY + 269.0, 100.0, 20.0), 13.0, 600, DT_RIGHT | DT_VCENTER, 0.9),
+            t(&weekly_line, rect(20.0, DY + 298.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
         ];
-        // trois anneaux : valeur au centre, nom et détail dessous
+        // deux rangées de trois anneaux : valeur au centre, nom et détail dessous
+        let at = |i: usize| (15.0 + (i % 3) as f32 * 90.0, 40.0 + (i / 3) as f32 * 112.0);
         for (i, (g, v)) in gauges.iter().zip(&values).enumerate() {
-            let cx = 15.0 + i as f32 * 90.0;
-            texts.push(t(v, rect(cx, 40.0 + RING / 2.0 - 13.0, 90.0, 22.0), 18.0, 600, DT_CENTER | DT_VCENTER, 1.0));
-            texts.push(t("%", rect(cx, 40.0 + RING / 2.0 + 7.0, 90.0, 14.0), 10.0, 600, DT_CENTER | DT_VCENTER, 0.55));
-            texts.push(t(g.1, rect(cx, 114.0, 90.0, 16.0), 11.5, 600, DT_CENTER | DT_VCENTER, 0.9));
-            texts.push(t(&g.2, rect(cx, 130.0, 90.0, 14.0), 10.5, 400, DT_CENTER | DT_VCENTER, 0.6));
+            let (cx, y) = at(i);
+            texts.push(t(v, rect(cx, y + RING / 2.0 - 13.0, 90.0, 22.0), 18.0, 600, DT_CENTER | DT_VCENTER, 1.0));
+            texts.push(t(g.1, rect(cx, y + RING / 2.0 + 7.0, 90.0, 14.0), 10.0, 600, DT_CENTER | DT_VCENTER, 0.55));
+            texts.push(t(g.2, rect(cx, y + 74.0, 90.0, 16.0), 11.5, 600, DT_CENTER | DT_VCENTER, 0.9));
+            texts.push(t(&g.3, rect(cx, y + 90.0, 90.0, 14.0), 10.5, 400, DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS, 0.6));
         }
         let ink = look(self.cfg.theme, self.desk.surf.light_back).ink;
         let (lw, lh) = ((PW * s) as usize, (PH * s) as usize);
         let mut layer = win::text_layer(lw, lh, &texts, ink);
         let n = (RING * s).round() as usize;
         for (i, g) in gauges.iter().enumerate() {
-            let (ox, oy) = (((15.0 + i as f32 * 90.0 + (90.0 - RING) / 2.0) * s) as usize, (40.0 * s) as usize);
+            let (cx, y) = at(i);
+            let (ox, oy) = (((cx + (90.0 - RING) / 2.0) * s) as usize, (y * s) as usize);
             for (k, p) in win::ring(n, g.0, crate::gauge_color(g.0, ink), ink).into_iter().enumerate() {
                 let (x, y) = (ox + k % n, oy + k / n);
                 if x < lw && y < lh {
@@ -306,10 +340,11 @@ impl App {
                     Pill { rr: fill, color, amount: if v > 0.0 { 0.9 * content } else { 0.0 }, rim: 0.4 * content }]
             };
             let [.., bat, session, weekly] = d.vals.map(|v| v.x.max(0.0));
+            let dy = DY;
             let white = crate::accent(&look);
-            pills.extend(bar(205.0, bat, crate::battery_color(bat, white), 5.0));
-            pills.extend(bar(241.0, session, crate::gauge_color(session, white), 5.0));
-            pills.extend(bar(291.0, weekly, crate::gauge_color(weekly, white), 4.0));
+            pills.extend(bar(dy + 205.0, bat, crate::battery_color(bat, white), 5.0));
+            pills.extend(bar(dy + 241.0, session, crate::gauge_color(session, white), 5.0));
+            pills.extend(bar(dy + 291.0, weekly, crate::gauge_color(weekly, white), 4.0));
             let l = LOCK;
             pills.push(Pill { rr: Rr { x: p.x + l.0 * s, y: p.y + l.1 * s, w: l.2 * s, h: l.2 * s, r: l.2 * s / 2.0 },
                 color: crate::accent(&look), amount: if d.locked { 0.3 } else { 0.1 } * content, rim: 0.3 * content });
@@ -354,13 +389,13 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                 SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION as usize, 0);
                 return 0;
             }
-            // arrivée sur le widget : petite attente avant d'ouvrir (on peut le traverser ou l'attraper)
-            if app(|a| !std::mem::replace(&mut a.desk.tracking, true)).unwrap_or(false) {
-                track();
-                KillTimer(h, T_CLOSE);
-                if app(|a| a.desk.surf.open.target < 0.5).unwrap_or(false) {
-                    SetTimer(h, T_OPEN, 140, None);
-                }
+            // sur le widget : on (re)demande à être prévenu de la sortie, et petite attente avant d'ouvrir
+            // (on peut le traverser ou l'attraper)
+            track();
+            KillTimer(h, T_CLOSE);
+            if !OPENING.get() && app(|a| a.desk.surf.open.target < 0.5).unwrap_or(false) {
+                OPENING.set(true);
+                SetTimer(h, T_OPEN, 140, None);
             }
             0
         }
@@ -368,15 +403,16 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             // la goutte s'agrandit sous la souris : fausse sortie, on vérifie où elle est vraiment
             let mut c: POINT = std::mem::zeroed();
             GetCursorPos(&mut c);
+            // app occupée : on suppose la souris dedans et on redemande la sortie, plutôt que de la perdre
             let inside = app(|a| {
                 let s = a.scale();
                 a.desk.press.is_some() || a.desk.over(s, (c.x - a.desk.surf.win.left) as f32, (c.y - a.desk.surf.win.top) as f32)
-            }).unwrap_or(false);
+            }).unwrap_or(true);
             if inside {
                 track();
                 return 0;
             }
-            app(|a| a.desk.tracking = false);
+            OPENING.set(false);
             KillTimer(h, T_OPEN);
             if !app(|a| a.desk.locked).unwrap_or(false) {
                 SetTimer(h, T_CLOSE, 300, None); // pardonne un écart de souris
@@ -385,18 +421,24 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         }
         WM_TIMER => {
             match wp {
+                // app occupée : le minuteur reste armé et réessaie au prochain tic
                 T_OPEN => {
-                    KillTimer(h, T_OPEN);
-                    app(|a| a.desk_open());
+                    if app(|a| a.desk_open()).is_some() {
+                        KillTimer(h, T_OPEN);
+                        OPENING.set(false);
+                    }
                 }
                 T_CLOSE => {
-                    KillTimer(h, T_CLOSE);
-                    app(|a| if !a.desk.locked { a.desk_close() });
+                    if app(|a| if !a.desk.locked { a.desk_close() }).is_some() {
+                        KillTimer(h, T_CLOSE);
+                    }
                 }
                 T_SYS => {
                     app(|a| {
                         a.desk.stats = a.desk.sys.sample();
+                        a.desk.gstats = a.desk.gpu.as_ref().map(gpu::Gpu::sample).unwrap_or_default();
                         a.desk_targets(); // les anneaux glissent vers la nouvelle mesure
+                        a.rebuild_desk_layer(); // le réseau change aussi quand les anneaux ne bougent pas
                     });
                 }
                 _ => {}

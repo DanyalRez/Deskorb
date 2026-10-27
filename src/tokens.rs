@@ -70,8 +70,12 @@ fn refresh(path: &PathBuf, text: &str) -> Result<String, Error> {
     let body = format!(r#"{{"grant_type":"refresh_token","refresh_token":"{old_refresh}","client_id":"{CLIENT_ID}"}}"#);
     let (status, reply) = crate::win::https("POST", "platform.claude.com", "/v1/oauth/token",
         "Content-Type: application/json\r\n", Some(body.as_bytes())).ok_or(Error::Offline)?;
-    if status != 200 {
-        return Err(if (400..500).contains(&status) { Error::SignedOut } else { Error::Offline });
+    match status {
+        200 => {}
+        // 429 : le serveur demande d'espacer, le jeton de renouvellement reste bon
+        429 => return Err(Error::RateLimited),
+        400..500 => return Err(Error::SignedOut),
+        _ => return Err(Error::Offline),
     }
     let access = str_field(&reply, "access_token").ok_or(Error::Offline)?;
     let new_refresh = str_field(&reply, "refresh_token").unwrap_or(old_refresh);

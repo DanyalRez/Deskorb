@@ -5,6 +5,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod desk;
+mod gpu;
 mod mouse;
 #[allow(dead_code)] // copié de DESKTOUCH, tout n'est pas utilisé
 mod render;
@@ -435,7 +436,8 @@ impl App {
                 self.check_thresholds(u.session);
             }
             Some(Err(e)) => {
-                if e == tokens::Error::RateLimited {
+                // refus ou jeton refusé : on espace aussi, sinon chaque essai entretient le blocage
+                if matches!(e, tokens::Error::RateLimited | tokens::Error::SignedOut) {
                     self.usage_every = (self.usage_every * 2).min(USAGE_MAX_BACKOFF);
                 }
                 self.usage_err = Some(e);
