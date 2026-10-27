@@ -1,4 +1,4 @@
-//! DESKORB : batterie de la Pulsar TenZ et limites d'usage Claude (session, semaine), dans la zone de notification.
+//! DESKORB : batterie de la souris (Pulsar, Logitech, Bluetooth) et limites d'usage Claude (session, semaine), dans la zone de notification.
 //! L'icône affiche l'état en direct (mini-widget) ; un clic ouvre un panneau Liquid Glass au-dessus de la barre,
 //! le clic droit ouvre les réglages. Deux fenêtres en couches dessinées par le moteur de DESKTOUCH.
 
@@ -336,6 +336,10 @@ impl App {
         self.mouse.as_ref().and_then(|m| m.battery)
     }
 
+    fn mouse_name(&self) -> String {
+        self.mouse.as_ref().map_or_else(|| tr(self.fr(), ("Mouse", "Souris")).into(), |m| m.name.clone())
+    }
+
     fn mouse_line(&self) -> String {
         let fr = self.fr();
         let Some(m) = &self.mouse else { return tr(fr, ("Not detected", "Non détectée")).into() };
@@ -396,13 +400,13 @@ impl App {
     fn tip(&self) -> String {
         let bat = self.battery().map_or("—".into(), |b| format!("{b} %"));
         let (s, w) = (Self::pct(self.usage.map(|u| u.session)), Self::pct(self.usage.map(|u| u.weekly)));
-        format!("Pulsar : {bat}\nClaude : {s} · {} {w}", tr(self.fr(), ("week", "semaine")))
+        format!("{} : {bat}\nClaude : {s} · {} {w}", self.mouse_name(), tr(self.fr(), ("week", "semaine")))
     }
 
     unsafe fn refresh(&mut self) {
-        let last = self.battery();
+        let last = self.mouse.as_ref().map(|m| (m.name.clone(), m.battery));
         self.mouse = mouse::read();
-        if let Some(m) = self.mouse.as_mut().filter(|m| m.battery.is_none()) {
+        if let Some((m, (_, last))) = self.mouse.as_mut().filter(|m| m.battery.is_none()).zip(last).filter(|(m, l)| m.name == l.0) {
             m.battery = last; // en veille : on garde la dernière valeur lue
         }
         self.fetch_usage(self.usage_every);
@@ -543,7 +547,7 @@ impl App {
                 self.alerted = true;
                 let fr = self.fr();
                 win::notify(self.panel.hwnd, tr(fr, ("Low mouse battery", "Batterie de la souris faible")),
-                    &format!("Pulsar TenZ : {b} %. {}", tr(fr, ("Time to charge it.", "Pense à la recharger."))));
+                    &format!("{} : {b} %. {}", m.name, tr(fr, ("Time to charge it.", "Pense à la recharger."))));
             }
             _ => {}
         }
@@ -664,13 +668,13 @@ impl App {
         let (session_pct, weekly_pct) = (Self::pct(session), Self::pct(weekly));
         let session_line = self.session_line();
         let weekly_line = self.window_line(weekly, ("All models", "Tous les modèles"));
-        let mouse_line = self.mouse_line();
+        let (mouse_line, mouse_name) = (self.mouse_line(), self.mouse_name());
         let (h, g) = (HEADER, GEAR);
         let tokens_y = h + if self.cfg.compact { 66.0 } else { 104.0 };
         let mut texts = vec![
             t("DESKORB", rect(20.0, 12.0, 200.0, 20.0), 11.0, 700, DT_LEFT | DT_VCENTER, 0.55),
             t("\u{E713}", rect(g.0, g.1, g.2, g.2), 14.0, 400, DT_CENTER | DT_VCENTER, 0.75),
-            t("Pulsar TenZ", rect(20.0, h + 16.0, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
+            t(&mouse_name, rect(20.0, h + 16.0, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
             t(&bat_txt, rect(180.0, h + 12.0, 120.0, 30.0), 22.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
             t("Claude", rect(20.0, tokens_y, 200.0, 22.0), 14.0, 600, DT_LEFT | DT_VCENTER, 1.0),
             // chevron : la section s'ouvre sur la vue Usage Pro

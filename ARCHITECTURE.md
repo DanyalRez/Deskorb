@@ -59,6 +59,16 @@ réponse lue en rapport d'entrée. Octet 0 = `0x08`, octet 1 = commande, dernier
 La souris s'endort vite quand on ne la touche pas : elle ne répond plus, l'app garde alors la dernière valeur et affiche « en veille ».
 `cargo run -- --probe` liste les interfaces et lit la batterie.
 
+Ordre de détection : Pulsar, puis Logitech, puis Bluetooth (la première trouvée s'affiche, avec son nom).
+
+- **Logitech** (VID `046D`, collection `FF00:0002`, rapports longs `0x11` de 20 octets, HID++ 2.0) : index d'appareil
+  `0xFF` (câble) puis 1 à 6 (dongle). `0x0005` donne le nom et le type (souris, pavé, trackball ; un clavier est ignoré),
+  `0x1004` Unified Battery (le % seulement si l'appareil l'annonce, sinon paliers ignorés) ou `0x1000` Battery Status.
+  `0x1001` (tension seule) est ignorée : le % dépendrait d'une courbe approximative.
+- **Bluetooth**, toutes marques : propriété `{104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2` (le % des Paramètres Windows)
+  sur les nœuds `BTHLE` / `BTHENUM`, retenue si le même conteneur (`ContainerId`) contient une souris.
+- Les autres dongles 2,4 GHz ont des protocoles fermés : un module par marque, à écrire avec la souris en main.
+
 ## Reste à faire
 
 - Layout exact du panneau (attend ton schéma) + animations à ressort de DESKTOUCH.

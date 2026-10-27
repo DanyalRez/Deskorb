@@ -310,7 +310,7 @@ impl App {
         }).collect();
         let net = format!("↓ {}   ↑ {}", sys::fmt_rate(st.down, fr), sys::fmt_rate(st.up, fr));
         let bat_txt = self.battery().map_or("—".into(), |b| format!("{b} %"));
-        let mouse_line = self.mouse_line();
+        let (mouse_line, mouse_name) = (self.mouse_line(), self.mouse_name());
         let (session, weekly) = (self.usage.map(|u| u.session), self.usage.map(|u| u.weekly));
         let (session_pct, weekly_pct) = (Self::pct(session), Self::pct(weekly));
         let session_line = self.session_line();
@@ -326,7 +326,7 @@ impl App {
             texts.push(t(&net, rect(100.0, y, 180.0, 18.0), 12.0, 600, DT_RIGHT | DT_VCENTER, 0.85));
         }
         if let Some(y) = ly.mouse {
-            texts.push(t("Pulsar TenZ", rect(20.0, y, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0));
+            texts.push(t(&mouse_name, rect(20.0, y, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0));
             texts.push(t(&bat_txt, rect(180.0, y - 2.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0));
             texts.push(t(&mouse_line, rect(20.0, y + 20.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65));
         }

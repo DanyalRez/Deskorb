@@ -6,7 +6,7 @@
 
 **Your wireless mouse battery and your live Claude usage limits, right in the taskbar.**
 
-A tiny Windows tray app with a Liquid Glass panel: see how much charge your Pulsar mouse has left and where you stand on your Claude session and weekly limits, without opening anything.
+A tiny Windows tray app with a Liquid Glass panel: see how much charge your wireless mouse has left and where you stand on your Claude session and weekly limits, without opening anything.
 
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%2F%2011-2b2d31?style=flat-square)
 ![Native Rust](https://img.shields.io/badge/Rust-native-2b2d31?style=flat-square)
@@ -17,7 +17,7 @@ A tiny Windows tray app with a Liquid Glass panel: see how much charge your Puls
 
 ▶ [Watch the 24 s demo video](docs/media/deskorb.mp4)
 
-**[Download the beta (v0.0.1)](https://github.com/DanyalRez/Deskorb/releases)**
+**[Download v1.0.0](https://github.com/DanyalRez/Deskorb/releases/latest)**
 
 </div>
 
@@ -58,11 +58,15 @@ Pin the icon next to the clock (drag it out of the hidden icons) and you can rea
 2. Run it: the icon appears in the taskbar's hidden icons (drag it next to the clock to keep it visible).
 3. For the Claude limits, sign in once with Claude Code: `claude auth login`.
 
-No installer, no admin rights. Windows SmartScreen may warn about an unknown publisher the first time (the app isn't code-signed): *More info → Run anyway*. This is a **beta**: expect rough edges.
+No installer, no admin rights. Windows SmartScreen may warn about an unknown publisher the first time (the app isn't code-signed): *More info → Run anyway*.
 
 ## Supported hardware and data
 
-- **Mice**: Pulsar wireless mice on the 8K "dx" dongle (`3710:5406`, e.g. X2 CrazyLight / TenZ Edition), wired or wireless. Other dongles speaking the same protocol (Kysona, ATK, VXE family) may work but are untested.
+- **Mice**:
+  - **Pulsar** wireless mice on the 8K "dx" dongle (`3710:5406`, e.g. X2 CrazyLight / TenZ Edition), wired or wireless. Other dongles speaking the same protocol (Kysona, ATK, VXE family) may work but are untested.
+  - **Logitech** mice on a Unifying, Bolt or Lightspeed receiver, or by cable (HID++ 2.0). Only mice that report an exact percentage.
+  - **Any Bluetooth mouse** whose battery percentage shows in Windows *Settings → Bluetooth & devices*, whatever the brand.
+  - Other 2.4 GHz dongles use closed protocols and are not supported yet.
 - **Claude usage**: the same session and weekly percentages as Claude's own *Usage limits* screen, fetched live from Anthropic with Claude Code's sign-in (`~/.claude/.credentials.json`). Sign in once with `claude auth login`; Deskorb renews the token like Claude Code does. Anthropic rate-limits this request, so it's refreshed every 2 minutes (and when you open the panel), backing off on its own if asked to.
 
 ## Use
