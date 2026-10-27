@@ -9,6 +9,13 @@ use windows_sys::Win32::{
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 pub const REFRESH_SECS: [u32; 3] = [5, 15, 60];
+// sections de la goutte du widget
+pub const SEC_SYS: u8 = 1; // CPU, température CPU, RAM
+pub const SEC_GPU: u8 = 2; // GPU, mémoire vidéo, température GPU
+pub const SEC_NET: u8 = 4;
+pub const SEC_MOUSE: u8 = 8;
+pub const SEC_CLAUDE: u8 = 16;
+pub const SEC_ALL: u8 = 31;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Config {
@@ -22,6 +29,9 @@ pub struct Config {
     pub wait_secs: u32, // délai avant « Claude attend ta réponse »
     pub desk: bool,     // widget de bureau
     pub desk_pos: Option<(i32, i32)>, // sa place à l'écran ; aucune : coin haut-droit
+    pub desk_opacity: f32,  // opacité du carré au repos, 0,15 à 1
+    pub desk_click: bool,   // la goutte s'ouvre au clic seulement (pas au survol)
+    pub desk_sections: u8,  // sections affichées dans la goutte (SEC_*)
     pub startup: bool,
 }
 
@@ -29,7 +39,8 @@ impl Default for Config {
     fn default() -> Self {
         // français si Windows l'est (langue principale 0x0C), anglais sinon
         let french = unsafe { GetUserDefaultUILanguage() } & 0x3FF == 0x0C;
-        Config { theme: 0, icon: 0, compact: false, refresh: 1, french, alert: true, notify: true, wait_secs: 30, desk: true, desk_pos: None, startup: false }
+        Config { theme: 0, icon: 0, compact: false, refresh: 1, french, alert: true, notify: true, wait_secs: 30, desk: true, desk_pos: None, desk_opacity: 1.0,
+            desk_click: false, desk_sections: SEC_ALL, startup: false }
     }
 }
 
@@ -49,6 +60,9 @@ pub fn parse(s: &str) -> Config {
             "claude_notifications" => c.notify = v != "0",
             "wait_secs" => c.wait_secs = v.parse().unwrap_or(30).clamp(5, 600),
             "desktop_widget" => c.desk = v != "0",
+            "widget_opacity" => c.desk_opacity = v.parse::<f32>().map_or(1.0, |p| (p / 100.0).clamp(0.15, 1.0)),
+            "widget_opens" => c.desk_click = v == "click",
+            "widget_sections" => c.desk_sections = n.map_or(SEC_ALL, |n| n as u8 & SEC_ALL),
             "desktop_widget_pos" => c.desk_pos = v.split_once(' ').and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?))),
             "startup" => c.startup = v != "0",
             _ => {}
@@ -68,9 +82,10 @@ pub fn load() -> Config {
 pub fn save(c: &Config) {
     let Some(f) = file() else { return };
     let pos = c.desk_pos.map_or(String::new(), |(x, y)| format!("desktop_widget_pos={x} {y}\n"));
-    let s = format!("theme={}\nicon={}\npanel={}\nrefresh={}\nlanguage={}\nlow_battery_alert={}\nclaude_notifications={}\nwait_secs={}\ndesktop_widget={}\n{pos}startup={}\n",
+    let s = format!("theme={}\nicon={}\npanel={}\nrefresh={}\nlanguage={}\nlow_battery_alert={}\nclaude_notifications={}\nwait_secs={}\ndesktop_widget={}\n{pos}widget_opacity={}\nwidget_opens={}\nwidget_sections={}\nstartup={}\n",
         c.theme, c.icon, if c.compact { "compact" } else { "detailed" }, REFRESH_SECS[c.refresh],
-        if c.french { "fr" } else { "en" }, c.alert as u8, c.notify as u8, c.wait_secs, c.desk as u8, c.startup as u8);
+        if c.french { "fr" } else { "en" }, c.alert as u8, c.notify as u8, c.wait_secs, c.desk as u8,
+        (c.desk_opacity * 100.0).round(), if c.desk_click { "click" } else { "hover" }, c.desk_sections, c.startup as u8);
     let _ = std::fs::create_dir_all(f.parent().unwrap()).and_then(|_| std::fs::write(f, s));
 }
 
@@ -92,9 +107,9 @@ mod tests {
     #[test]
     fn config_round_trip() {
         let c = Config { theme: 2, icon: 1, compact: true, refresh: 2, french: true, alert: false, notify: false, wait_secs: 45,
-            desk: false, desk_pos: Some((-1200, 340)), startup: true };
+            desk: false, desk_pos: Some((-1200, 340)), desk_opacity: 0.4, desk_click: true, desk_sections: SEC_GPU | SEC_CLAUDE, startup: true };
         // une ancienne clé (token_limit) est simplement ignorée
-        let s = "theme=2\nicon=1\npanel=compact\ntoken_limit=250\nrefresh=60\nlanguage=fr\nlow_battery_alert=0\nclaude_notifications=0\nwait_secs=45\ndesktop_widget=0\ndesktop_widget_pos=-1200 340\nstartup=1\n";
+        let s = "theme=2\nicon=1\npanel=compact\ntoken_limit=250\nrefresh=60\nlanguage=fr\nlow_battery_alert=0\nclaude_notifications=0\nwait_secs=45\ndesktop_widget=0\ndesktop_widget_pos=-1200 340\nwidget_opacity=40\nwidget_opens=click\nwidget_sections=18\nstartup=1\n";
         assert_eq!(parse(s), c);
         // valeurs hors bornes ramenées dans les clous
         let bad = parse("theme=9\nicon=7\nrefresh=42\n");

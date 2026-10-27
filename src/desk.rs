@@ -6,7 +6,7 @@
 use crate::{
     app, look, lerp,
     render::{smoothstep, Frame, Layer, Pill, Rgb, Rr, Spring},
-    cputemp, gpu, sensors, sys, tr, win, App, Surface, M,
+    cputemp, gpu, sensors, settings, sys, tr, win, App, Surface, M,
 };
 use windows_sys::Win32::{
     Foundation::*,
@@ -19,8 +19,6 @@ const SQ_R: f32 = 15.0;
 const GLYPH: f32 = 30.0;
 const GAP: f32 = 8.0; // entre le carré et la goutte ouverte
 const PW: f32 = 300.0;
-const PH: f32 = 452.0;
-const DY: f32 = 130.0; // tout ce qui suit les deux rangées d'anneaux et le réseau
 const PR: f32 = 26.0;
 const RING: f32 = 70.0;
 const LOCK: (f32, f32, f32) = (PW - 44.0, 8.0, 32.0); // bouton verrou (x, y, côté), relatif à la goutte
@@ -28,6 +26,28 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 const T_OPEN: usize = 11;
 const T_CLOSE: usize = 12;
 const T_SYS: usize = 13;
+
+/// Place de chaque section dans la goutte (haut, relatif à la goutte), selon celles qu'on affiche.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Lay {
+    pub sys: Option<f32>,
+    pub gpu: Option<f32>,
+    pub net: Option<f32>,
+    pub mouse: Option<f32>,
+    pub claude: Option<f32>,
+    pub h: f32, // hauteur de la goutte
+}
+
+pub fn lay(sections: u8) -> Lay {
+    let mut y = 40.0; // sous l'en-tête
+    let mut take = |bit: u8, h: f32| (sections & bit != 0).then(|| {
+        y += h;
+        y - h
+    });
+    let (sys, gpu, net) = (take(settings::SEC_SYS, 112.0), take(settings::SEC_GPU, 112.0), take(settings::SEC_NET, 32.0));
+    let (mouse, claude) = (take(settings::SEC_MOUSE, 50.0), take(settings::SEC_CLAUDE, 104.0));
+    Lay { sys, gpu, net, mouse, claude, h: y + 2.0 }
+}
 
 thread_local! {
     // ouverture au survol en attente : hors de l'état de l'app, qui peut être occupé (redessin) quand
@@ -53,13 +73,15 @@ pub struct Desk {
     // valeurs affichées, qui glissent vers les mesures :
     // CPU, RAM, température CPU (÷ 100), GPU, mémoire vidéo, température GPU (÷ 100), batterie, session, semaine
     vals: [Spring; 9],
+    pub ph: f32, // hauteur de la goutte, selon les sections affichées
 }
 
 impl Desk {
     pub unsafe fn new(hwnd: HWND, pos: Option<(i32, i32)>, s: f32) -> Self {
         Desk { surf: Surface::new(hwnd), pos: pos.unwrap_or_else(|| default_pos(s)), press: None, locked: false,
             big: false, right: false, down: true, sys: sys::Sys::default(), stats: sys::Stats::default(),
-            gpu: None, gstats: gpu::Stats::default(), ctemp: Err(cputemp::Missing::Off), vals: [Spring::new(0.0, 90.0, 1.0); 9] }
+            gpu: None, gstats: gpu::Stats::default(), ctemp: Err(cputemp::Missing::Off), vals: [Spring::new(0.0, 90.0, 1.0); 9],
+            ph: lay(settings::SEC_ALL).h }
     }
 
     /// Le carré, dans la fenêtre.
@@ -74,7 +96,7 @@ impl Desk {
     /// La goutte ouverte, dans la fenêtre : elle part du coin du carré, en diagonale vers l'intérieur de l'écran.
     fn drop_rr(&self, s: f32) -> Rr {
         let q = self.square(s);
-        let (pw, ph, g) = (PW * s, PH * s, GAP * s);
+        let (pw, ph, g) = (PW * s, self.ph * s, GAP * s);
         Rr { x: if self.right { q.x + q.w + g } else { q.x - g - pw }, y: if self.down { q.y + q.h + g } else { q.y - g - ph },
             w: pw, h: ph, r: PR * s }
     }
@@ -96,7 +118,7 @@ impl Desk {
         mi.cbSize = size_of::<MONITORINFO>() as u32;
         GetMonitorInfoW(MonitorFromPoint(POINT { x: self.pos.0, y: self.pos.1 }, MONITOR_DEFAULTTONEAREST), &mut mi);
         let wk = mi.rcWork;
-        let (pw, ph, g) = ((PW * s) as i32, (PH * s) as i32, (GAP * s) as i32);
+        let (pw, ph, g) = ((PW * s) as i32, (self.ph * s) as i32, (GAP * s) as i32);
         self.right = self.pos.0 + sq + g + pw <= wk.right || self.pos.0 - g - pw < wk.left;
         self.down = self.pos.1 + sq + g + ph <= wk.bottom || self.pos.1 - g - ph < wk.top;
         let (ww, wh) = (sq + g + pw + 2 * m, sq + g + ph + 2 * m);
@@ -166,6 +188,7 @@ impl App {
         }
         let s = self.scale();
         if !self.desk.big {
+            self.desk.ph = lay(self.cfg.desk_sections).h;
             self.desk.layout(s, true);
             let probe = self.desk.drop_rr(s);
             self.desk.surf.capture((10.0 * s) as usize, probe);
@@ -208,6 +231,18 @@ impl App {
     }
 
     /// Données changées (relevé, souris, Claude) : on redessine ce qui est visible.
+    /// Sections changées : la goutte ouverte prend sa nouvelle hauteur.
+    pub unsafe fn desk_resize(&mut self) {
+        if self.desk.big {
+            let s = self.scale();
+            self.desk.ph = lay(self.cfg.desk_sections).h;
+            self.desk.layout(s, true);
+            let probe = self.desk.drop_rr(s);
+            self.desk.surf.capture((10.0 * s) as usize, probe);
+        }
+        self.desk_refresh();
+    }
+
     pub unsafe fn desk_refresh(&mut self) {
         if !self.desk.surf.shown {
             return;
@@ -280,38 +315,45 @@ impl App {
         let (session_pct, weekly_pct) = (Self::pct(session), Self::pct(weekly));
         let session_line = self.session_line();
         let weekly_line = self.window_line(weekly, ("All models", "Tous les modèles"));
-        let l = LOCK;
+        let (l, ly) = (LOCK, lay(self.cfg.desk_sections));
         let mut texts = vec![
             t("DESKORB", rect(20.0, 12.0, 160.0, 20.0), 11.0, 700, DT_LEFT | DT_VCENTER, 0.55),
             // verrou : fermé = la goutte reste ouverte
             t(if self.desk.locked { "\u{E72E}" } else { "\u{E785}" }, rect(l.0, l.1, l.2, l.2), 13.0, 400, DT_CENTER | DT_VCENTER, 0.75),
-            t(tr(fr, ("Network", "Réseau")), rect(20.0, 264.0, 100.0, 18.0), 12.0, 600, DT_LEFT | DT_VCENTER, 0.9),
-            t(&net, rect(100.0, 264.0, 180.0, 18.0), 12.0, 600, DT_RIGHT | DT_VCENTER, 0.85),
-            t("Pulsar TenZ", rect(20.0, DY + 166.0, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
-            t(&bat_txt, rect(180.0, DY + 164.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
-            t(&mouse_line, rect(20.0, DY + 186.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
-            t("Claude", rect(20.0, DY + 216.0, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0),
-            t(&session_pct, rect(180.0, DY + 214.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0),
-            t(&session_line, rect(20.0, DY + 248.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
-            t(tr(fr, ("Weekly", "Hebdomadaire")), rect(20.0, DY + 270.0, 180.0, 18.0), 12.0, 600, DT_LEFT | DT_VCENTER, 0.9),
-            t(&weekly_pct, rect(180.0, DY + 269.0, 100.0, 20.0), 13.0, 600, DT_RIGHT | DT_VCENTER, 0.9),
-            t(&weekly_line, rect(20.0, DY + 298.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65),
         ];
-        // deux rangées de trois anneaux : valeur au centre, nom et détail dessous
-        let at = |i: usize| (15.0 + (i % 3) as f32 * 90.0, 40.0 + (i / 3) as f32 * 112.0);
+        if let Some(y) = ly.net {
+            texts.push(t(tr(fr, ("Network", "Réseau")), rect(20.0, y, 100.0, 18.0), 12.0, 600, DT_LEFT | DT_VCENTER, 0.9));
+            texts.push(t(&net, rect(100.0, y, 180.0, 18.0), 12.0, 600, DT_RIGHT | DT_VCENTER, 0.85));
+        }
+        if let Some(y) = ly.mouse {
+            texts.push(t("Pulsar TenZ", rect(20.0, y, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0));
+            texts.push(t(&bat_txt, rect(180.0, y - 2.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0));
+            texts.push(t(&mouse_line, rect(20.0, y + 20.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65));
+        }
+        if let Some(y) = ly.claude {
+            texts.push(t("Claude", rect(20.0, y, 180.0, 20.0), 13.0, 600, DT_LEFT | DT_VCENTER, 1.0));
+            texts.push(t(&session_pct, rect(180.0, y - 2.0, 100.0, 24.0), 16.0, 600, DT_RIGHT | DT_VCENTER, 1.0));
+            texts.push(t(&session_line, rect(20.0, y + 32.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65));
+            texts.push(t(tr(fr, ("Weekly", "Hebdomadaire")), rect(20.0, y + 54.0, 180.0, 18.0), 12.0, 600, DT_LEFT | DT_VCENTER, 0.9));
+            texts.push(t(&weekly_pct, rect(180.0, y + 53.0, 100.0, 20.0), 13.0, 600, DT_RIGHT | DT_VCENTER, 0.9));
+            texts.push(t(&weekly_line, rect(20.0, y + 82.0, 260.0, 16.0), 11.0, 400, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, 0.65));
+        }
+        // rangées de trois anneaux (système, carte graphique) : valeur au centre, nom et détail dessous
+        let row_y = |i: usize| if i < 3 { ly.sys } else { ly.gpu };
+        let at = |i: usize| row_y(i).map(|y| (15.0 + (i % 3) as f32 * 90.0, y));
         for (i, (g, v)) in gauges.iter().zip(&values).enumerate() {
-            let (cx, y) = at(i);
+            let Some((cx, y)) = at(i) else { continue };
             texts.push(t(v, rect(cx, y + RING / 2.0 - 13.0, 90.0, 22.0), 18.0, 600, DT_CENTER | DT_VCENTER, 1.0));
             texts.push(t(g.1, rect(cx, y + RING / 2.0 + 7.0, 90.0, 14.0), 10.0, 600, DT_CENTER | DT_VCENTER, 0.55));
             texts.push(t(g.2, rect(cx, y + 74.0, 90.0, 16.0), 11.5, 600, DT_CENTER | DT_VCENTER, 0.9));
             texts.push(t(&g.3, rect(cx, y + 90.0, 90.0, 14.0), 10.5, 400, DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS, 0.6));
         }
         let ink = look(self.cfg.theme, self.desk.surf.light_back).ink;
-        let (lw, lh) = ((PW * s) as usize, (PH * s) as usize);
+        let (lw, lh) = ((PW * s) as usize, (ly.h * s) as usize);
         let mut layer = win::text_layer(lw, lh, &texts, ink);
         let n = (RING * s).round() as usize;
         for (i, g) in gauges.iter().enumerate() {
-            let (cx, y) = at(i);
+            let Some((cx, y)) = at(i) else { continue };
             let (ox, oy) = (((cx + (90.0 - RING) / 2.0) * s) as usize, (y * s) as usize);
             for (k, p) in win::ring(n, g.0, crate::gauge_color(g.0, ink), ink).into_iter().enumerate() {
                 let (x, y) = (ox + k % n, oy + k / n);
@@ -353,11 +395,14 @@ impl App {
                     Pill { rr: fill, color, amount: if v > 0.0 { 0.9 * content } else { 0.0 }, rim: 0.4 * content }]
             };
             let [.., bat, session, weekly] = d.vals.map(|v| v.x.max(0.0));
-            let dy = DY;
-            let white = crate::accent(&look);
-            pills.extend(bar(dy + 205.0, bat, crate::battery_color(bat, white), 5.0));
-            pills.extend(bar(dy + 241.0, session, crate::gauge_color(session, white), 5.0));
-            pills.extend(bar(dy + 291.0, weekly, crate::gauge_color(weekly, white), 4.0));
+            let (ly, white) = (lay(self.cfg.desk_sections), crate::accent(&look));
+            if let Some(y) = ly.mouse {
+                pills.extend(bar(y + 39.0, bat, crate::battery_color(bat, white), 5.0));
+            }
+            if let Some(y) = ly.claude {
+                pills.extend(bar(y + 25.0, session, crate::gauge_color(session, white), 5.0));
+                pills.extend(bar(y + 75.0, weekly, crate::gauge_color(weekly, white), 4.0));
+            }
             let l = LOCK;
             pills.push(Pill { rr: Rr { x: p.x + l.0 * s, y: p.y + l.1 * s, w: l.2 * s, h: l.2 * s, r: l.2 * s / 2.0 },
                 color: crate::accent(&look), amount: if d.locked { 0.3 } else { 0.1 } * content, rim: 0.3 * content });
@@ -373,7 +418,8 @@ impl App {
             refr_amount: 36.0 * s,
             glyph: false,
             pills: &pills,
-            alpha: 1.0,
+            // opacité choisie au repos, pleine goutte ouverte
+            alpha: lerp(self.cfg.desk_opacity, 1.0, o.clamp(0.0, 1.0)),
             scale: s,
             look,
         });
@@ -406,7 +452,7 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             // (on peut le traverser ou l'attraper)
             track();
             KillTimer(h, T_CLOSE);
-            if !OPENING.get() && !CLICK_CLOSED.get() && app(|a| a.desk.surf.open.target < 0.5).unwrap_or(false) {
+            if !OPENING.get() && !CLICK_CLOSED.get() && app(|a| a.desk.surf.open.target < 0.5 && !a.cfg.desk_click).unwrap_or(false) {
                 OPENING.set(true);
                 SetTimer(h, T_OPEN, 140, None);
             }
@@ -473,8 +519,9 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                     return 2;
                 }
                 // anneau « Temp. CPU » (2e de la 1re rangée) tant que le service n'est pas actif
+                let sys_y = lay(a.cfg.desk_sections).sys;
                 if a.desk.surf.open.x > 0.5 && a.desk.ctemp == Err(cputemp::Missing::Off)
-                    && (105.0..195.0).contains(&lx) && (40.0..144.0).contains(&ly) {
+                    && sys_y.is_some_and(|y| (105.0..195.0).contains(&lx) && (y..y + 104.0).contains(&ly)) {
                     return 3;
                 }
                 0
@@ -526,5 +573,19 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             0
         }
         _ => DefWindowProcW(h, msg, wp, lp),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layout_follows_sections() {
+        let all = lay(settings::SEC_ALL);
+        assert_eq!((all.sys, all.gpu, all.net, all.mouse, all.claude, all.h), (Some(40.0), Some(152.0), Some(264.0), Some(296.0), Some(346.0), 452.0));
+        let some = lay(settings::SEC_GPU | settings::SEC_CLAUDE);
+        assert_eq!((some.sys, some.gpu, some.claude, some.h), (None, Some(40.0), Some(152.0), 258.0));
+        assert_eq!(lay(0).h, 42.0); // l'en-tête seul
     }
 }

@@ -46,7 +46,8 @@ const GAP: f32 = 4.0; // entre une fenêtre et la barre des tâches
 const PANEL_W: f32 = 320.0;
 const PANEL_R: f32 = 26.0;
 const PREFS_W: f32 = 340.0;
-const PREFS_TOP: f32 = 54.0; // sous le titre
+const PREFS_TOP: f32 = 98.0; // sous le titre et les onglets
+const TAB_Y: f32 = 50.0; // barre d'onglets Général | Widget
 const LOW_BATTERY: u8 = 20;
 // Anthropic limite la fréquence (429 vu à 15 s) : un relevé toutes les 2 min, espacé jusqu'à 30 min si refusé
 const USAGE_EVERY: u64 = 120;
@@ -73,36 +74,73 @@ fn tr(fr: bool, t: Tr) -> &'static str {
 /// Contrôle d'une ligne des réglages.
 enum Ctl {
     Seg(&'static [Tr]),
+    Slider,
     Toggle,
 }
 
-const ROWS: [(Tr, Ctl); 9] = [
-    (("Theme", "Thème"), Ctl::Seg(&[("Liquid Glass", "Liquid Glass"), ("Dark", "Sombre"), ("Light", "Clair")])),
-    (("Tray icon", "Icône"), Ctl::Seg(&[("Orbit", "Orbite"), ("Gauges", "Jauges"), ("Percent", "Pourcentage")])),
-    (("Panel", "Panneau"), Ctl::Seg(&[("Detailed", "Détaillé"), ("Compact", "Compact")])),
-    (("Refresh every", "Actualiser toutes les"), Ctl::Seg(&[("5 s", "5 s"), ("15 s", "15 s"), ("1 min", "1 min")])),
-    (("Language", "Langue"), Ctl::Seg(&[("English", "English"), ("Français", "Français")])),
-    (("Low battery alert", "Alerte batterie faible"), Ctl::Toggle),
-    (("Claude notifications", "Notifications Claude"), Ctl::Toggle),
-    (("Desktop widget", "Widget de bureau"), Ctl::Toggle),
-    (("Launch at startup", "Lancer au démarrage"), Ctl::Toggle),
+/// Réglage porté par une ligne : la ligne se repère par ce qu'elle règle, pas par sa place.
+#[derive(Clone, Copy, PartialEq)]
+enum Key {
+    Theme,
+    Icon,
+    Panel,
+    Refresh,
+    Lang,
+    BatteryAlert,
+    Notify,
+    Desk,
+    Startup,
+    Opacity,
+    Opens,
+    Section(u8),
+}
+
+type Row = (Tr, Ctl, Key);
+
+const GENERAL: [Row; 9] = [
+    (("Theme", "Thème"), Ctl::Seg(&[("Liquid Glass", "Liquid Glass"), ("Dark", "Sombre"), ("Light", "Clair")]), Key::Theme),
+    (("Tray icon", "Icône"), Ctl::Seg(&[("Orbit", "Orbite"), ("Gauges", "Jauges"), ("Percent", "Pourcentage")]), Key::Icon),
+    (("Panel", "Panneau"), Ctl::Seg(&[("Detailed", "Détaillé"), ("Compact", "Compact")]), Key::Panel),
+    (("Refresh every", "Actualiser toutes les"), Ctl::Seg(&[("5 s", "5 s"), ("15 s", "15 s"), ("1 min", "1 min")]), Key::Refresh),
+    (("Language", "Langue"), Ctl::Seg(&[("English", "English"), ("Français", "Français")]), Key::Lang),
+    (("Low battery alert", "Alerte batterie faible"), Ctl::Toggle, Key::BatteryAlert),
+    (("Claude notifications", "Notifications Claude"), Ctl::Toggle, Key::Notify),
+    (("Desktop widget", "Widget de bureau"), Ctl::Toggle, Key::Desk),
+    (("Launch at startup", "Lancer au démarrage"), Ctl::Toggle, Key::Startup),
 ];
+
+const WIDGET: [Row; 7] = [
+    (("Square opacity", "Opacité du carré"), Ctl::Slider, Key::Opacity),
+    (("Opens on", "Ouverture"), Ctl::Seg(&[("Hover", "Survol"), ("Click", "Clic")]), Key::Opens),
+    (("System: CPU, temp., RAM", "Système : CPU, temp., RAM"), Ctl::Toggle, Key::Section(settings::SEC_SYS)),
+    (("Graphics card", "Carte graphique"), Ctl::Toggle, Key::Section(settings::SEC_GPU)),
+    (("Network", "Réseau"), Ctl::Toggle, Key::Section(settings::SEC_NET)),
+    (("Mouse", "Souris"), Ctl::Toggle, Key::Section(settings::SEC_MOUSE)),
+    (("Claude", "Claude"), Ctl::Toggle, Key::Section(settings::SEC_CLAUDE)),
+];
+
+const TABS: [Tr; 2] = [("General", "Général"), ("Widget", "Widget")];
+
+fn rows(tab: usize) -> &'static [Row] {
+    if tab == 0 { &GENERAL } else { &WIDGET }
+}
 
 fn row_height(c: &Ctl) -> f32 {
     match c {
         Ctl::Seg(_) => 66.0,
+        Ctl::Slider => 58.0,
         Ctl::Toggle => 42.0,
     }
 }
 
-/// Haut de chaque ligne (relatif au panneau des réglages) et hauteur totale.
-fn row_tops() -> ([f32; ROWS.len()], f32) {
-    let mut tops = [0.0; ROWS.len()];
+/// Haut de chaque ligne de l'onglet (relatif au panneau des réglages) et hauteur totale.
+fn row_tops(tab: usize) -> (Vec<f32>, f32) {
     let mut y = PREFS_TOP;
-    for (t, (_, c)) in tops.iter_mut().zip(&ROWS) {
-        *t = y;
+    let tops = rows(tab).iter().map(|(_, c, _)| {
+        let t = y;
         y += row_height(c);
-    }
+        t
+    }).collect();
     (tops, y + 10.0)
 }
 
@@ -241,7 +279,10 @@ struct App {
     panel: Surface,
     prefs: Surface,
     desk: desk::Desk,
-    p_rows: Vec<Spring>, // une par ligne : case choisie ou interrupteur
+    p_rows: Vec<Spring>, // une par ligne de l'onglet : case choisie, curseur ou interrupteur
+    tab: usize,          // onglet des réglages : 0 Général, 1 Widget
+    tab_x: Spring,
+    dragging: bool,      // curseur d'opacité tenu
     mouse: Option<mouse::Mouse>,
     usage: Option<tokens::Usage>,     // dernières valeurs reçues, gardées si le réseau tombe
     usage_err: Option<tokens::Error>, // dernier échec, affiché sous les valeurs
@@ -715,23 +756,34 @@ impl App {
 
     fn prefs_rr(&self) -> Rr {
         let s = self.scale();
-        Rr { x: M * s, y: M * s, w: PREFS_W * s, h: row_tops().1 * s, r: PANEL_R * s }
+        Rr { x: M * s, y: M * s, w: PREFS_W * s, h: row_tops(self.tab).1 * s, r: PANEL_R * s }
     }
 
-    /// Valeur affichée par la ligne `i` : case choisie ou interrupteur (0 / 1).
-    fn row_value(&self, i: usize) -> f32 {
+    /// Valeur affichée par une ligne : case choisie, position du curseur ou interrupteur (0 / 1).
+    fn row_value(&self, key: Key) -> f32 {
         let c = &self.cfg;
-        match i {
-            0 => c.theme as f32,
-            1 => c.icon as f32,
-            2 => c.compact as u8 as f32,
-            3 => c.refresh as f32,
-            4 => c.french as u8 as f32,
-            5 => c.alert as u8 as f32,
-            6 => c.notify as u8 as f32,
-            7 => c.desk as u8 as f32,
-            _ => c.startup as u8 as f32,
+        match key {
+            Key::Theme => c.theme as f32,
+            Key::Icon => c.icon as f32,
+            Key::Panel => c.compact as u8 as f32,
+            Key::Refresh => c.refresh as f32,
+            Key::Lang => c.french as u8 as f32,
+            Key::BatteryAlert => c.alert as u8 as f32,
+            Key::Notify => c.notify as u8 as f32,
+            Key::Desk => c.desk as u8 as f32,
+            Key::Startup => c.startup as u8 as f32,
+            Key::Opacity => (c.desk_opacity - 0.15) / 0.85,
+            Key::Opens => c.desk_click as u8 as f32,
+            Key::Section(b) => (c.desk_sections & b != 0) as u8 as f32,
         }
+    }
+
+    fn snap_rows(&mut self) {
+        for (i, (_, _, key)) in rows(self.tab).iter().enumerate() {
+            let v = self.row_value(*key);
+            self.p_rows[i].snap(v);
+        }
+        self.tab_x.snap(self.tab as f32);
     }
 
     unsafe fn show_prefs(&mut self) {
@@ -744,17 +796,25 @@ impl App {
             self.panel.release();
         }
         let s = self.scale();
-        self.prefs.place_corner(PREFS_W, row_tops().1, s);
+        self.prefs.place_corner(PREFS_W, row_tops(self.tab).1, s);
         self.prefs.capture((10.0 * s) as usize, self.prefs_rr());
-        for i in 0..ROWS.len() {
-            let v = self.row_value(i);
-            self.p_rows[i].snap(v);
-        }
+        self.snap_rows();
         self.prefs.open.snap(0.0);
         self.rebuild_prefs_layer();
         self.draw_prefs();
         self.prefs.show();
         self.kick();
+    }
+
+    /// Autre onglet : le panneau change de hauteur, on le rouvre.
+    unsafe fn switch_tab(&mut self, tab: usize) {
+        if tab == self.tab {
+            return;
+        }
+        self.tab = tab;
+        self.prefs.open.snap(0.0);
+        self.prefs.release();
+        self.show_prefs();
     }
 
     /// Range le panneau (`true`) ou les réglages (`false`) ; la fenêtre se cache à la fin de l'animation.
@@ -775,10 +835,16 @@ impl App {
             left: (x * s) as i32, top: (y * s) as i32, right: ((x + w) * s) as i32, bottom: ((y + h) * s) as i32,
         };
         let label = |t: &'static str, rect: RECT, level: f32, flags| win::Text { s: t, r: rect, size: 12.5 * s, weight: 500, flags, level };
-        let (tops, _) = row_tops();
+        let (tops, _) = row_tops(self.tab);
+        let opacity = format!("{:.0} %", self.cfg.desk_opacity * 100.0);
         let mut texts = vec![win::Text { s: tr(fr, ("Settings", "Réglages")), r: r(22.0, 16.0, 296.0, 26.0), size: 17.0 * s,
             weight: 600, flags: DT_LEFT | DT_VCENTER, level: 1.0 }];
-        for (i, (name, ctl)) in ROWS.iter().enumerate() {
+        for (k, t) in TABS.iter().enumerate() {
+            let mut t = label(tr(fr, *t), r(20.0 + k as f32 * 150.0, TAB_Y, 150.0, 34.0), 1.0, DT_CENTER | DT_VCENTER);
+            t.weight = 600;
+            texts.push(t);
+        }
+        for (i, (name, ctl, key)) in rows(self.tab).iter().enumerate() {
             let y = tops[i];
             match ctl {
                 Ctl::Seg(opts) => {
@@ -788,6 +854,13 @@ impl App {
                         let mut t = label(tr(fr, *o), r(20.0 + k as f32 * w, y + 22.0, w, 34.0), 1.0, DT_CENTER | DT_VCENTER);
                         t.weight = 600;
                         texts.push(t);
+                    }
+                }
+                Ctl::Slider => {
+                    texts.push(label(tr(fr, *name), r(22.0, y, 200.0, 18.0), 0.62, DT_LEFT | DT_VCENTER));
+                    if *key == Key::Opacity {
+                        texts.push(win::Text { s: &*opacity, r: r(220.0, y, 100.0, 18.0), size: 12.5 * s, weight: 600,
+                            flags: DT_RIGHT | DT_VCENTER, level: 0.9 });
                     }
                 }
                 Ctl::Toggle => {
@@ -812,15 +885,23 @@ impl App {
         let s = self.scale();
         let at = |x: f32, y: f32, w: f32, h: f32, r: f32| Rr { x: p.x + x * s, y: p.y + y * s, w: w * s, h: h * s, r: r * s };
         let pill = |rr: Rr, color: Rgb, amount: f32, rim: f32| Pill { rr, color, amount: amount * content, rim: rim * content };
-        let (tops, _) = row_tops();
-        let mut pills = Vec::new();
-        for (i, (_, ctl)) in ROWS.iter().enumerate() {
+        let (tops, _) = row_tops(self.tab);
+        // onglets : même pastille glissante que les segments
+        let mut pills = vec![pill(at(20.0, TAB_Y, 300.0, 34.0, 17.0), ac, 0.08, 0.0),
+            pill(at(23.0 + self.tab_x.x * 150.0, TAB_Y + 3.0, 144.0, 28.0, 14.0), ac, 0.2, 0.7)];
+        for (i, (_, ctl, _)) in rows(self.tab).iter().enumerate() {
             let (y, v) = (tops[i], self.p_rows[i].x);
             match ctl {
                 Ctl::Seg(opts) => {
                     let w = 300.0 / opts.len() as f32;
                     pills.push(pill(at(20.0, y + 22.0, 300.0, 34.0, 17.0), ac, 0.08, 0.0));
                     pills.push(pill(at(23.0 + v * w, y + 25.0, w - 6.0, 28.0, 14.0), ac, 0.2, 0.7));
+                }
+                Ctl::Slider => {
+                    let knob = 20.0 + v.clamp(0.0, 1.0) * (300.0 - 22.0);
+                    pills.push(pill(at(20.0, y + 30.0, 300.0, 6.0, 3.0), ac, 0.16, 0.0));
+                    pills.push(pill(at(20.0, y + 30.0, knob - 20.0 + 11.0, 6.0, 3.0), ac, 0.6, 0.0));
+                    pills.push(pill(at(knob, y + 22.0, 22.0, 22.0, 11.0), [1.0; 3], 1.0, 0.6));
                 }
                 Ctl::Toggle => {
                     pills.push(pill(at(272.0, y + 6.0, 48.0, 28.0, 14.0), ac, lerp(0.14, 0.6, v), 0.3));
@@ -845,44 +926,64 @@ impl App {
         self.prefs.present(&f);
     }
 
-    /// Clic sur la ligne `i` à l'abscisse logique `x` (relative au panneau des réglages).
+    /// Clic sur la ligne `i` de l'onglet, à l'abscisse logique `x` (relative au panneau des réglages).
     unsafe fn prefs_click(&mut self, i: usize, x: f32) {
-        match ROWS[i].1 {
-            Ctl::Seg(opts) => {
+        let (_, ctl, key) = &rows(self.tab)[i];
+        match (ctl, *key) {
+            (Ctl::Seg(opts), key) => {
                 let k = (((x - 20.0) / (300.0 / opts.len() as f32)).max(0.0) as usize).min(opts.len() - 1);
-                match i {
-                    0 => self.cfg.theme = k,
-                    1 => self.cfg.icon = k,
-                    2 => self.cfg.compact = k == 1,
-                    3 => {
+                match key {
+                    Key::Theme => self.cfg.theme = k,
+                    Key::Icon => self.cfg.icon = k,
+                    Key::Panel => self.cfg.compact = k == 1,
+                    Key::Refresh => {
                         self.cfg.refresh = k;
                         SetTimer(self.panel.hwnd, T_POLL, settings::REFRESH_SECS[k] * 1000, None);
                     }
+                    Key::Opens => self.cfg.desk_click = k == 1,
                     _ => self.cfg.french = k == 1,
                 }
             }
-            Ctl::Toggle if i == 5 => self.cfg.alert = !self.cfg.alert,
-            Ctl::Toggle if i == 6 => self.cfg.notify = !self.cfg.notify,
-            Ctl::Toggle if i == 7 => {
+            (Ctl::Slider, _) => {
+                self.dragging = true;
+                return self.set_opacity_from(x);
+            }
+            (_, Key::BatteryAlert) => self.cfg.alert = !self.cfg.alert,
+            (_, Key::Notify) => self.cfg.notify = !self.cfg.notify,
+            (_, Key::Desk) => {
                 self.cfg.desk = !self.cfg.desk;
                 self.apply_desk();
             }
-            Ctl::Toggle => {
+            (_, Key::Section(b)) => self.cfg.desk_sections ^= b,
+            _ => {
                 self.cfg.startup = !self.cfg.startup;
                 settings::set_startup(self.cfg.startup);
             }
         }
-        self.p_rows[i].target = self.row_value(i);
+        self.p_rows[i].target = self.row_value(*key);
         settings::save(&self.cfg);
-        match i {
-            0 => {
+        match key {
+            Key::Theme => {
                 self.rebuild_prefs_layer(); // nouvelles couleurs de texte
                 self.desk_refresh();
             }
-            4 => self.rebuild_prefs_layer(), // langue : tous les textes changent
-            1 => self.refresh_icon(),
+            Key::Lang => self.rebuild_prefs_layer(), // langue : tous les textes changent
+            Key::Icon => self.refresh_icon(),
+            Key::Section(_) => self.desk_resize(),
             _ => {}
         }
+        self.prefs_dirty();
+    }
+
+    /// Curseur d'opacité : le carré suit en direct.
+    unsafe fn set_opacity_from(&mut self, lx: f32) {
+        let t = ((lx - 31.0) / 278.0).clamp(0.0, 1.0);
+        self.cfg.desk_opacity = 0.15 + t * 0.85;
+        if let Some(i) = rows(self.tab).iter().position(|r| r.2 == Key::Opacity) {
+            self.p_rows[i].target = t;
+        }
+        self.rebuild_prefs_layer();
+        self.desk_refresh();
         self.prefs_dirty();
     }
 
@@ -900,10 +1001,11 @@ impl App {
         let dt = (now - self.last).as_secs_f32().min(1.0 / 30.0);
         self.last = now;
         let panel_moving = !self.panel.open.rest();
-        let prefs_moving = !self.prefs.open.rest() || !self.p_rows.iter().all(|s| s.rest());
+        let prefs_moving = !self.prefs.open.rest() || !self.tab_x.rest() || !self.p_rows.iter().all(|s| s.rest());
         self.panel.open.step(dt);
         self.prefs.open.step(dt);
         self.p_rows.iter_mut().for_each(|s| s.step(dt));
+        self.tab_x.step(dt);
         if self.panel.shown && panel_moving {
             self.draw_panel();
         }
@@ -1007,17 +1109,40 @@ unsafe extern "system" fn prefs_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_LBUTTONDOWN => {
             let Some((x, y)) = local(lp) else { return 0 };
-            // ligne touchée : la zone des segments, ou toute la ligne pour un interrupteur
-            let (tops, _) = row_tops();
-            let row = ROWS.iter().enumerate().position(|(i, (_, c))| {
+            // barre d'onglets
+            if (TAB_Y..TAB_Y + 34.0).contains(&y) && (20.0..320.0).contains(&x) {
+                app(|a| a.switch_tab(((x - 20.0) / 150.0) as usize));
+                return 0;
+            }
+            // ligne touchée : la zone du contrôle (segments, curseur), ou toute la ligne pour un interrupteur
+            let Some(tab) = app(|a| a.tab) else { return 0 };
+            let (tops, _) = row_tops(tab);
+            let row = rows(tab).iter().enumerate().position(|(i, (_, c, _))| {
                 let t = tops[i];
                 match c {
                     Ctl::Seg(_) => (t + 22.0..t + 56.0).contains(&y) && (20.0..320.0).contains(&x),
+                    Ctl::Slider => (t + 14.0..t + 50.0).contains(&y) && (8.0..332.0).contains(&x),
                     Ctl::Toggle => (t..t + 40.0).contains(&y) && (0.0..PREFS_W).contains(&x),
                 }
             });
             if let Some(i) = row {
+                if matches!(rows(tab)[i].1, Ctl::Slider) {
+                    SetCapture(h);
+                }
                 app(|a| a.prefs_click(i, x));
+            }
+            0
+        }
+        WM_MOUSEMOVE => {
+            if let Some((x, _)) = local(lp) {
+                app(|a| if a.dragging { a.set_opacity_from(x) });
+            }
+            0
+        }
+        WM_LBUTTONUP => {
+            if app(|a| std::mem::replace(&mut a.dragging, false)) == Some(true) {
+                ReleaseCapture();
+                app(|a| settings::save(&a.cfg));
             }
             0
         }
@@ -1027,7 +1152,7 @@ unsafe extern "system" fn prefs_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         // clic ailleurs : les réglages se rangent
         WM_ACTIVATE if wp & 0xFFFF == WA_INACTIVE as usize => {
-            app(|a| a.hide(true));
+            app(|a| if !a.dragging { a.hide(true) });
             0
         }
         _ => DefWindowProcW(h, msg, wp, lp),
@@ -1079,10 +1204,8 @@ fn main() {
         win::tray(h, WM_TRAY, NIM_ADD, icon, "Deskorb");
         APP.with_borrow_mut(|a| *a = Some(App {
             cfg, panel: Surface::new(h), prefs: Surface::new(ph), desk: desk::Desk::new(dh, cfg.desk_pos, GetDpiForWindow(h) as f32 / 96.0),
-            p_rows: ROWS.iter().map(|(_, c)| match c {
-                Ctl::Seg(_) => Spring::new(0.0, 420.0, 0.78),
-                Ctl::Toggle => Spring::new(0.0, 520.0, 0.75),
-            }).collect(),
+            p_rows: vec![Spring::new(0.0, 460.0, 0.78); GENERAL.len().max(WIDGET.len())],
+            tab: 0, tab_x: Spring::new(0.0, 420.0, 0.78), dragging: false,
             mouse: None, usage: None, usage_err: None, fetching: false, fetched_at: None, usage_every: USAGE_EVERY, reading: false, pro: false, pro_all: Vec::new(), pro_days: [(0, 0.0); 7], forecast: usage::Forecast::Idle, alerted_pct: (None, 0), notified_waits: Vec::new(), alerted: false, icon,
             taskbar_created: RegisterWindowMessageW(win::w("TaskbarCreated").as_ptr()),
             animating: false, last: Instant::now(),
