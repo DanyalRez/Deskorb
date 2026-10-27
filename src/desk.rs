@@ -6,7 +6,7 @@
 use crate::{
     app, look, lerp,
     render::{smoothstep, Frame, Layer, Pill, Rgb, Rr, Spring},
-    gpu, sys, tr, win, App, Surface, M,
+    cputemp, gpu, sensors, sys, tr, win, App, Surface, M,
 };
 use windows_sys::Win32::{
     Foundation::*,
@@ -33,6 +33,8 @@ thread_local! {
     // ouverture au survol en attente : hors de l'état de l'app, qui peut être occupé (redessin) quand
     // Windows envoie les messages de souris, et qui sinon les perdrait
     static OPENING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    // refermée d'un clic : le survol ne la rouvre pas tant que la souris n'est pas sortie du widget
+    static CLICK_CLOSED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub struct Desk {
@@ -47,6 +49,7 @@ pub struct Desk {
     pub stats: sys::Stats,
     gpu: Option<gpu::Gpu>, // NVML, ouvert seulement goutte ouverte
     gstats: gpu::Stats,
+    ctemp: Result<f32, cputemp::Missing>, // publiée par le service capteurs, ou ce qui manque
     // valeurs affichées, qui glissent vers les mesures :
     // CPU, RAM, température CPU (÷ 100), GPU, mémoire vidéo, température GPU (÷ 100), batterie, session, semaine
     vals: [Spring; 9],
@@ -56,7 +59,7 @@ impl Desk {
     pub unsafe fn new(hwnd: HWND, pos: Option<(i32, i32)>, s: f32) -> Self {
         Desk { surf: Surface::new(hwnd), pos: pos.unwrap_or_else(|| default_pos(s)), press: None, locked: false,
             big: false, right: false, down: true, sys: sys::Sys::default(), stats: sys::Stats::default(),
-            gpu: None, gstats: gpu::Stats::default(), vals: [Spring::new(0.0, 90.0, 1.0); 9] }
+            gpu: None, gstats: gpu::Stats::default(), ctemp: Err(cputemp::Missing::Off), vals: [Spring::new(0.0, 90.0, 1.0); 9] }
     }
 
     /// Le carré, dans la fenêtre.
@@ -100,6 +103,12 @@ impl Desk {
         let left = if self.right { self.pos.0 - m } else { self.pos.0 + sq + m - ww };
         let top = if self.down { self.pos.1 - m } else { self.pos.1 + sq + m - wh };
         self.surf.place(RECT { left, top, right: left + ww, bottom: top + wh });
+    }
+
+    /// Relève GPU (NVML) et température CPU (PawnIO), s'ils sont ouverts.
+    fn sample_sensors(&mut self) {
+        self.gstats = self.gpu.as_ref().map(gpu::Gpu::sample).unwrap_or_default();
+        self.ctemp = sensors::read().ok_or_else(cputemp::missing);
     }
 
     /// La souris est-elle sur le carré ou sur la goutte (coordonnées fenêtre) ?
@@ -169,7 +178,7 @@ impl App {
         if self.desk.gpu.is_none() {
             self.desk.gpu = gpu::Gpu::open();
         }
-        self.desk.gstats = self.desk.gpu.as_ref().map(gpu::Gpu::sample).unwrap_or_default();
+        self.desk.sample_sensors();
         self.desk_targets();
         SetTimer(self.desk.surf.hwnd, T_SYS, 1000, None);
         self.rebuild_desk_layer();
@@ -189,8 +198,7 @@ impl App {
         let st = self.desk.stats;
         let share = |used: u64, total: u64| used as f32 / total.max(1) as f32;
         let g = self.desk.gstats;
-        // shortcut: température CPU à 0 tant que le pilote PawnIO n'est pas branché (tranche suivante)
-        let targets = [st.cpu, share(st.ram_used, st.ram_total), 0.0,
+        let targets = [st.cpu, share(st.ram_used, st.ram_total), self.desk.ctemp.unwrap_or(0.0) / 100.0,
             g.load, share(g.vram_used, g.vram_total), g.temp / 100.0, self.battery().map_or(0.0, |b| b as f32 / 100.0), self.usage.map_or(0.0, |u| u.session.pct),
             self.usage.map_or(0.0, |u| u.weekly.pct)];
         for (v, t) in self.desk.vals.iter_mut().zip(targets) {
@@ -247,7 +255,12 @@ impl App {
         // (valeur 0–1, unité, nom, détail) ; la température s'affiche en °C (÷ 100 pour l'anneau et les seuils)
         let gauges: [(f32, &str, &str, String); 6] = [
             (cpu, "%", "CPU", format!("{} threads", st.threads)),
-            (ctemp, "°C", tr(fr, ("CPU temp.", "Temp. CPU")), tr(fr, ("needs PawnIO", "attend PawnIO")).into()),
+            (ctemp, "°C", tr(fr, ("CPU temp.", "Temp. CPU")), tr(fr, match self.desk.ctemp {
+                Ok(_) => ("package", "package"),
+                Err(cputemp::Missing::Off) => ("click to enable", "cliquer pour activer"),
+                Err(cputemp::Missing::NotIntel) => ("Intel only", "Intel seulement"),
+                Err(cputemp::Missing::NoPawnIO) => ("install PawnIO", "installer PawnIO"),
+            }).into()),
             (ram, "%", "RAM", sys::fmt_gb(st.ram_used, st.ram_total, fr)),
             (gload, "%", "GPU", if has_gpu { tr(fr, ("load", "charge")).into() } else { no_gpu.into() }),
             (vram, "%", tr(fr, ("Video memory", "Mémoire vidéo")), if has_gpu { sys::fmt_gb(gs.vram_used, gs.vram_total, fr) } else { "—".into() }),
@@ -255,7 +268,7 @@ impl App {
         ];
         // sans carte NVIDIA, la rangée GPU affiche des tirets
         let values: Vec<String> = gauges.iter().enumerate().map(|(i, g)| match i {
-            1 => "—".into(), // température CPU : pas encore de pilote
+            1 if self.desk.ctemp.is_err() => "—".into(), // température CPU : pas de pilote ou service arrêté
             0 | 2 => format!("{:.0}", g.0 * 100.0),
             _ if has_gpu => format!("{:.0}", g.0 * 100.0),
             _ => "—".into(),
@@ -393,7 +406,7 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
             // (on peut le traverser ou l'attraper)
             track();
             KillTimer(h, T_CLOSE);
-            if !OPENING.get() && app(|a| a.desk.surf.open.target < 0.5).unwrap_or(false) {
+            if !OPENING.get() && !CLICK_CLOSED.get() && app(|a| a.desk.surf.open.target < 0.5).unwrap_or(false) {
                 OPENING.set(true);
                 SetTimer(h, T_OPEN, 140, None);
             }
@@ -412,7 +425,7 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                 track();
                 return 0;
             }
-            OPENING.set(false);
+            (OPENING.set(false), CLICK_CLOSED.set(false));
             KillTimer(h, T_OPEN);
             if !app(|a| a.desk.locked).unwrap_or(false) {
                 SetTimer(h, T_CLOSE, 300, None); // pardonne un écart de souris
@@ -436,7 +449,7 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                 T_SYS => {
                     app(|a| {
                         a.desk.stats = a.desk.sys.sample();
-                        a.desk.gstats = a.desk.gpu.as_ref().map(gpu::Gpu::sample).unwrap_or_default();
+                        a.desk.sample_sensors();
                         a.desk_targets(); // les anneaux glissent vers la nouvelle mesure
                         a.rebuild_desk_layer(); // le réseau change aussi quand les anneaux ne bougent pas
                     });
@@ -459,6 +472,11 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                 if a.desk.surf.open.x > 0.5 && (l.0..l.0 + l.2).contains(&lx) && (l.1..l.1 + l.2).contains(&ly) {
                     return 2;
                 }
+                // anneau « Temp. CPU » (2e de la 1re rangée) tant que le service n'est pas actif
+                if a.desk.surf.open.x > 0.5 && a.desk.ctemp == Err(cputemp::Missing::Off)
+                    && (105.0..195.0).contains(&lx) && (40.0..144.0).contains(&ly) {
+                    return 3;
+                }
                 0
             }).unwrap_or(0);
             match target {
@@ -466,6 +484,7 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
                     KillTimer(h, T_OPEN);
                     SetCapture(h);
                 }
+                3 => sensors::setup(),
                 // bouton verrou de la goutte
                 2 => {
                     app(|a| {
@@ -480,11 +499,12 @@ pub unsafe extern "system" fn proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) ->
         }
         WM_LBUTTONUP => {
             ReleaseCapture();
-            // clic sur le carré : ouvre et verrouille ; déjà verrouillé : referme
+            // clic sur le carré : fermé, il ouvre et verrouille ; ouvert (survol ou verrou), il referme
             app(|a| {
                 if a.desk.press.take().is_some() {
-                    if a.desk.locked {
+                    if a.desk.surf.open.target > 0.5 {
                         a.desk_close();
+                        CLICK_CLOSED.set(true);
                     } else {
                         a.desk.locked = true;
                         a.desk_open();

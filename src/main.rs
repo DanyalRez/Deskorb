@@ -4,11 +4,13 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cputemp;
 mod desk;
 mod gpu;
 mod mouse;
 #[allow(dead_code)] // copié de DESKTOUCH, tout n'est pas utilisé
 mod render;
+mod sensors;
 mod settings;
 mod sys;
 mod tokens;
@@ -1041,6 +1043,10 @@ unsafe fn class(name: &[u16], proc: WNDPROC, inst: HINSTANCE) {
 fn main() {
     if std::env::args().any(|a| a == "--probe") {
         return mouse::probe();
+    }
+    // service capteurs, lancé en administrateur par sa tâche planifiée
+    if std::env::args().any(|a| a == "--sensors") {
+        return sensors::run();
     }
     if std::env::args().any(|a| a == "--tokens") {
         let t = Instant::now();
